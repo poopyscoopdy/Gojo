@@ -27,6 +27,16 @@ jobs:
           dotnet publish desktop/OmnaSignDesktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:PublishTrimmed=false -o publish
           if (-not (Test-Path "publish/OmnaSignDesktop.exe")) { throw "Missing EXE output" }
           Get-Item "publish/OmnaSignDesktop.exe" | Format-List Name,Length
+      - name: Smoke test native Windows window startup
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path "publish/OmnaSignDesktop.exe").Path
+          $proc = Start-Process -FilePath $exe -PassThru -ErrorAction Stop
+          Start-Sleep -Seconds 6
+          $proc.Refresh()
+          if ($proc.HasExited) { throw "Native OmnaSign Desktop exited immediately with code $($proc.ExitCode)" }
+          Write-Host "OmnaSign WinForms process remained running; startup smoke test passed."
+          Stop-Process -Id $proc.Id -Force
       - uses: actions/upload-artifact@v4
         with:
           name: OmnaSignDesktop-v5-Windows

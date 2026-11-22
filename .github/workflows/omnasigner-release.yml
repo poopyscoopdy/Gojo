@@ -1,0 +1,57 @@
+name: Build and publish unsigned OmnaSigner IPA
+on:
+  push:
+    branches: [omnasign-pages]
+    paths:
+      - 'iOS/**'
+      - '.github/workflows/omnasigner-release.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: |
+          cd iOS
+          xcodegen generate
+      - name: Build unsigned ARM64 IPA
+        run: |
+          set -euo pipefail
+          cd iOS
+          xcodebuild -project OmnaSigner.xcodeproj -scheme OmnaSigner -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/build" CODE_SIGNING_ALLOWED=NO build
+          cd ..
+          mkdir -p Payload
+          cp -R "$RUNNER_TEMP/build/Build/Products/Release-iphoneos/OmnaSigner.app" Payload/
+          zip -qr OmnaSigner-unsigned.ipa Payload
+      - name: Verify IPA app bundle
+        run: |
+          unzip -t OmnaSigner-unsigned.ipa | tail -n 2
+          unzip -l OmnaSigner-unsigned.ipa | grep 'Payload/OmnaSigner.app/OmnaSigner'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OmnaSigner-unsigned-iphone
+          path: OmnaSigner-unsigned.ipa
+      - name: Publish public unsigned IPA download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="omnasigner-v1.0-preview"
+          cat > notes.md <<'EOF'
+          OmnaSigner compiled for iPhone (iOS 16 or newer).
+          
+          IMPORTANT: This IPA is UNSIGNED. You must use SideStore, Sideloadly, or another compatible signing sideloader with your own Apple account/certificate before installing. Do not try to install the unsigned file directly from Safari.
+          
+          Native source is in the omnasign-pages branch. Built with RorkSign; actual on-device signing and installation still need physical-device testing. No Apple credentials are included.
+          EOF
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" OmnaSigner-unsigned.ipa --clobber
+          else
+            gh release create "$tag" OmnaSigner-unsigned.ipa --target "$GITHUB_SHA" --prerelease --title "OmnaSigner iPhone unsigned preview" --notes-file notes.md
+          fi

@@ -1,0 +1,36 @@
+name: Publish OmnaSigner Apple Maps build
+on:
+  push:
+    branches: [omnasign-pages]
+    paths: ['.github/workflows/publish-omnasigner-maps.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified macOS IPA artifact from successful run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 45073302736 --repo "$GITHUB_REPOSITORY" -n OmnaSigner-unsigned-iphone -D dist
+          unzip -t dist/OmnaSigner-unsigned.ipa | tail -n 1
+          unzip -l dist/OmnaSigner-unsigned.ipa | grep 'Payload/OmnaSigner.app/OmnaSigner'
+      - name: Publish a versioned Apple Maps IPA release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=omnasigner-v1.1-applemaps-preview
+          cat > /tmp/notes.md <<'EOF'
+          OmnaSigner for iOS 16 and later. This native ARM64 iOS app includes an Apple Maps test-location picker and GPX export, alongside IPA signing with your own certificate and provisioning profile.
+          This IPA is **unsigned**. Sign it with a supported sideloader before attempting installation.
+          The map picker is for development/testing only; it does not spoof system GPS or location reported by other apps.
+          Not verified on a physical iPhone; signing success depends on your matching Apple files.
+          EOF
+          gh release create "$tag" dist/OmnaSigner-unsigned.ipa --target "$GITHUB_SHA" --prerelease --title "OmnaSigner iPhone 1.1 — Apple Maps testing" --notes-file /tmp/notes.md

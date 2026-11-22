@@ -26,7 +26,7 @@ public sealed class StudioWindow : Form
     private static readonly Color Accent = Color.FromArgb(85, 120, 245);
     private static readonly Color Muted = Color.FromArgb(169, 184, 210);
     private static readonly string StudioUrl = "https://omnasign-studio.vercel.app";
-    private static readonly string IphoneIPA = "https://github.com/poopyscoopdy/Gojo/releases/download/omnasigner-v1.0-preview/OmnaSigner-unsigned.ipa";
+    private static readonly string IphoneIPA = "https://github.com/poopyscoopdy/Gojo/releases/download/omnasigner-v1.1-applemaps-preview/OmnaSigner-unsigned.ipa";
     private static readonly string Sideloadly = "https://sideloadly.io/";
     private readonly Panel surface = new() { Dock = DockStyle.Fill, BackColor = Bg, AutoScroll = true };
     private readonly Panel sidebar = new() { Dock = DockStyle.Left, Width = 210, BackColor = Color.FromArgb(12, 22, 40) };

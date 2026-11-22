@@ -25,7 +25,7 @@ public sealed class StudioWindow : Form
     private static readonly Color PanelBg = Color.FromArgb(17, 27, 47);
     private static readonly Color Accent = Color.FromArgb(85, 120, 245);
     private static readonly Color Muted = Color.FromArgb(169, 184, 210);
-    private static readonly string Site = "https://omnasign-studio.vercel.app";
+    private static readonly string StudioUrl = "https://omnasign-studio.vercel.app";
     private static readonly string IphoneIPA = "https://github.com/poopyscoopdy/Gojo/releases/download/omnasigner-v1.0-preview/OmnaSigner-unsigned.ipa";
     private static readonly string Sideloadly = "https://sideloadly.io/";
     private readonly Panel surface = new() { Dock = DockStyle.Fill, BackColor = Bg, AutoScroll = true };
@@ -120,7 +120,7 @@ public sealed class StudioWindow : Form
         p.Controls.Add(Actions(Button("Sign an IPA", (_, _) => ShowSign(), true), Button("Apple Account signing (Sideloadly)", (_, _) => OpenLink(Sideloadly))));
         p.Controls.Add(Label("2    Create or edit an app", 17, true));
         p.Controls.Add(Label("Use the embedded web studio to edit supported app resources and preview web-based iOS app projects."));
-        p.Controls.Add(Actions(Button("Open App Studio", (_, _) => ShowEditor(), true), Button("Open website in browser", (_, _) => OpenLink(Site))));
+        p.Controls.Add(Actions(Button("Open App Studio", (_, _) => ShowEditor(), true), Button("Open website in browser", (_, _) => OpenLink(StudioUrl))));
         p.Controls.Add(Label("3    Location lab", 17, true));
         p.Controls.Add(Label("Explore locations in Apple Maps and export an Xcode GPX test point. This does not change your iPhone’s system GPS or location shown by other apps."));
         p.Controls.Add(Actions(Button("Choose a test location", (_, _) => ShowMaps())));
@@ -210,13 +210,13 @@ public sealed class StudioWindow : Form
         p.Controls.Add(content);
         p.Controls.SetChildIndex(content, 1);
         SetPage(p);
-        LaunchWebView(content, Site + "/#studio", "Can't open embedded studio. Install Microsoft Edge WebView2 Runtime.");
+        LaunchWebView(content, StudioUrl + "/#studio", "Can't open embedded studio. Install Microsoft Edge WebView2 Runtime.");
     }
     private void ShowMaps()
     {
         var p = new Panel { BackColor = Bg };
         var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 118, FlowDirection = FlowDirection.LeftToRight, WrapContents = true, Padding = new Padding(15, 9, 10, 0), BackColor = PanelBg };
-        var lat = Field(), lon = Field();
+        var lat = Field(); var lon = Field();
         lat.Width = 110; lon.Width = 110; lat.Text = "40.7128"; lon.Text = "-74.0060";
         bar.Controls.Add(Label("Latitude")); bar.Controls.Add(lat);
         bar.Controls.Add(Label("Longitude")); bar.Controls.Add(lon);
@@ -278,7 +278,7 @@ public sealed class StudioWindow : Form
         p.Controls.Add(Label("A real compiled unsigned IPA. Sign with SideStore, Sideloadly, or another compatible sideloader before installation."));
         p.Controls.Add(Actions(Button("Download iPhone IPA", (_, _) => OpenLink(IphoneIPA), true)));
         p.Controls.Add(Label("OmnaSign Web", 17, true));
-        p.Controls.Add(Actions(Button("Open OmnaSign website", (_, _) => OpenLink(Site), true)));
+        p.Controls.Add(Actions(Button("Open OmnaSign website", (_, _) => OpenLink(StudioUrl), true)));
         p.Controls.Add(Label("Windows signing engine", 17, true));
         p.Controls.Add(Label("Local signing requires zsign.exe beside this EXE, or select its path on the Sign screen. This app itself does not provision Apple Account certificates."));
         p.Controls.Add(Actions(Button("Get zsign source", (_, _) => OpenLink("https://github.com/zhlynn/zsign"))));
@@ -291,7 +291,7 @@ public sealed class StudioWindow : Form
         p.Controls.Add(Label("To sign with only an Apple Account, use the external Sideloadly route until OmnaSign implements verified provisioning. A free Apple account typically has seven-day expiration."));
         p.Controls.Add(Label("OmnaAi API keys should never be embedded in the public installer. A hosted backend with server-held credentials, authentication, and usage limits is needed for bundled AI access."));
         p.Controls.Add(Label("Location tests are not systemwide iPhone location spoofing."));
-        p.Controls.Add(Actions(Button("Open OmnaSign website", (_, _) => OpenLink(Site), true)));
+        p.Controls.Add(Actions(Button("Open OmnaSign website", (_, _) => OpenLink(StudioUrl), true)));
         SetPage(p);
     }
     private void OpenLink(string url)

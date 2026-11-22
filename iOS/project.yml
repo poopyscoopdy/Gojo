@@ -1,0 +1,34 @@
+name: OmnaSigner
+options:
+  bundleIdPrefix: com.omna
+  deploymentTarget:
+    iOS: '16.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    TARGETED_DEVICE_FAMILY: '1,2'
+    IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_CFBundleDisplayName: OmnaSigner
+    INFOPLIST_KEY_UIFileSharingEnabled: YES
+    INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+    CODE_SIGN_STYLE: Automatic
+    SUPPORTS_MACCATALYST: NO
+packages:
+  rork-sign:
+    url: https://github.com/rorkai/rork-sign.git
+    from: 0.6.5
+targets:
+  OmnaSigner:
+    type: application
+    platform: iOS
+    sources:
+      - path: OmnaSigner
+    dependencies:
+      - package: rork-sign
+        product: RorkSign
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.omna.signer
+    scheme:
+      testTargets: []

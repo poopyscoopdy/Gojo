@@ -88,4 +88,81 @@ E('serverStatus').textContent=' • Web App and Downloads';
 function testCoordinates(){const a=Number(document.getElementById('mapLat').value),b=Number(document.getElementById('mapLon').value);if(!Number.isFinite(a)||!Number.isFinite(b)||a<-90||a>90||b<-180||b>180||document.getElementById('mapLat').value===''||document.getElementById('mapLon').value==='')throw Error('Enter valid latitude and longitude');return [a,b]}
 function openAppleMap(){try{const [a,b]=testCoordinates();window.open('https://maps.apple.com/?ll='+encodeURIComponent(a+','+b)+'&q=OmnaLocation%20test','_blank','noopener,noreferrer');document.getElementById('mapStatus').textContent='Opening Apple Maps (external)'}catch(e){document.getElementById('mapStatus').textContent=e.message}}
 function downloadGPX(){try{const [a,b]=testCoordinates();const xml='<?xml version="1.0" encoding="UTF-8"?><gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.1" creator="OmnaSign"><wpt lat="'+a+'" lon="'+b+'"><name>OmnaLocation test</name></wpt></gpx>';const url=URL.createObjectURL(new Blob([xml],{type:'application/gpx+xml'}));const link=document.createElement('a');link.href=url;link.download='OmnaLocation-test.gpx';link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);document.getElementById('mapStatus').textContent='Test GPX exported'}catch(e){document.getElementById('mapStatus').textContent=e.message}}
+
+let aiProposal=[];
+async function inspectSigningFile(){
+ const file=E('signIpa')?.files?.[0],element=E('signInspect');
+ if(!file){element.textContent='No IPA selected.';return;}
+ if(!/\.ipa$/i.test(file.name)){element.textContent='Choose an IPA file.';return;}
+ if(typeof JSZip==='undefined'){element.textContent='ZIP library unavailable. Connect to the internet and retry.';return;}
+ try{
+  const data=await JSZip.loadAsync(file),names=Object.keys(data.files);
+  const app=names.find(n=>/^Payload\/[^/]+\.app\//.test(n));
+  const count=names.filter(n=>!data.files[n].dir&&textFile(n)).length;
+  element.textContent='Selected '+file.name+' ('+(file.size/1048576).toFixed(2)+' MB). '+(app?'App: '+app.split('/')[1]:'No app bundle detected')+'. '+count+' editable text resources. Inspection is not signature verification.';
+ }catch(err){element.textContent='This IPA could not be read: '+err.message;}
+}
+async function editSigningFile(){
+ const file=E('signIpa')?.files?.[0];
+ if(!file){E('signInspect').textContent='Select an IPA first.';return;}
+ await importArchive(file);openTool('studio');
+}
+async function collectAiFiles(){
+ if(unsaved)await saveFile();
+ const result={};let total=0,count=0;
+ if(archive)for(const [path,entry] of Object.entries(archive.files)){
+  if(count>=12)break;
+  if(entry.dir||!textFile(path)||path.includes('..')||path.startsWith('/')||path.includes('\\'))continue;
+  const contents=await entry.async('string');
+  if(contents.length>16000||total+contents.length>35000)continue;
+  result[path]=contents;total+=contents.length;count++;
+ }
+ return result;
+}
+async function askOmnaAi(){
+ const prompt=E('aiPrompt').value.trim(),key=E('aiKey').value.trim(),mode=E('aiMode').value,model=E('aiModel').value;
+ if(!prompt){E('aiStatus').textContent='Describe the app or changes first.';return;}
+ if(!key){E('aiStatus').textContent='Enter an API key for integrated AI, or use Copy prompt for ChatGPT.';return;}
+ if(typeof JSZip==='undefined'){E('aiStatus').textContent='Could not load the ZIP editing library.';return;}
+ E('aiGo').disabled=true;E('aiStatus').textContent='OmnaAi is preparing file changes…';E('aiReview').replaceChildren();E('aiApply').classList.add('hidden');aiProposal=[];
+ try{
+  const files=await collectAiFiles();
+  const response=await fetch('/api/ai',{method:'POST',headers:{'content-type':'application/json','x-user-openai-key':key},body:JSON.stringify({model,mode,prompt,files})});
+  const result=await response.json();if(!response.ok)throw Error(result.error||'AI request failed');
+  aiProposal=Array.isArray(result.files)?result.files:[];
+  const review=E('aiReview');const summary=document.createElement('p');summary.textContent=result.summary||'File proposals available.';review.appendChild(summary);
+  for(const file of aiProposal){
+   const details=document.createElement('details');details.className='ai-file';
+   const title=document.createElement('summary');title.textContent=file.path+' · '+file.content.length+' characters';details.appendChild(title);
+   const pre=document.createElement('pre');pre.textContent=file.content;details.appendChild(pre);review.appendChild(details);
+  }
+  E('aiApply').classList.toggle('hidden',aiProposal.length===0);
+  E('aiStatus').textContent=aiProposal.length+' file proposal(s) ready. Review before applying.';
+ }catch(err){E('aiStatus').textContent=err.message||'OmnaAi failed.';}
+ finally{E('aiGo').disabled=false;}
+}
+async function applyAiProposal(){
+ if(!aiProposal.length){E('aiStatus').textContent='No AI changes available.';return;}
+ if(!archive)await newProject();
+ if(unsaved)await saveFile();
+ let updated=0,first=null;
+ for(const file of aiProposal){
+  if(typeof file.path!=='string'||typeof file.content!=='string'||file.path.includes('..')||file.path.includes('\\')||file.path.startsWith('/')||!textFile(file.path))continue;
+  // Native-only IPA packages must not have arbitrary new source injected as if it can modify compiled code.
+  if(sourceType==='ipa'&&!archive.file(file.path))continue;
+  archive.file(file.path,file.content);updated++;if(!first)first=file.path;
+ }
+ await refreshFiles();
+ if(first&&archive.file(first))await selectFile(first);
+ E('aiStatus').textContent=updated+' approved file(s) changed. Export your archive when ready. Modified IPAs must be re-signed.';
+ aiProposal=[];E('aiApply').classList.add('hidden');
+}
+async function copyAiPrompt(){
+ const query=E('aiPrompt').value.trim();
+ if(!query){E('aiStatus').textContent='Enter a prompt first.';return;}
+ const files=await collectAiFiles();
+ const prompt='Help me build or edit an iOS web-based application. Give complete updated file contents for the files that should change.\nRequest: '+query+'\nFiles:\n'+JSON.stringify(files).slice(0,20000);
+ try{await navigator.clipboard.writeText(prompt);E('aiStatus').textContent='Prompt copied; paste it into ChatGPT, then paste updates into the manual editor.';}
+ catch{E('aiStatus').textContent='Clipboard unavailable. Try opening this website over HTTPS.';}
+}
 </script></body></html>

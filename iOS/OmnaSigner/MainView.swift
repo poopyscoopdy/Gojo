@@ -2,6 +2,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 import WebKit
+import MapKit
+import CoreLocation
 
 private enum ImportKind { case ipa, certificate, profile }
 
@@ -14,6 +16,8 @@ struct MainView: View {
     @State private var draftHTML = "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>My Omna App</title><style>body{font-family:system-ui;text-align:center;background:#0a1732;color:white;padding:44px}button{padding:14px;border-radius:12px;background:#719aff;color:white;border:0}</style></head><body><h1>My Omna App</h1><p>Created using OmnaSigner.</p><button onclick=\"document.querySelector('p').textContent='It works!'\">Try me</button></body></html>"
     @State private var previewing = false
     @State private var exportedHTML: URL?
+    @State private var chosenLocation = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060)
+    @State private var testGPX: URL?
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -23,6 +27,8 @@ struct MainView: View {
                 .tabItem { Label("Editor", systemImage: "chevron.left.forwardslash.chevron.right") }.tag(1)
             NavigationStack { installScreen.navigationTitle("Install & Privacy") }
                 .tabItem { Label("Install", systemImage: "iphone.gen3") }.tag(2)
+            NavigationStack { appleMapScreen.navigationTitle("OmnaLocation") }
+                .tabItem { Label("Map", systemImage: "map.fill") }.tag(3)
         }
         .tint(.cyan)
         .preferredColorScheme(.dark)
@@ -148,6 +154,42 @@ struct MainView: View {
                     .navigationTitle("Web preview")
                     .navigationBarTitleDisplayMode(.inline)
             }
+        }
+    }
+
+    private var appleMapScreen: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Apple Maps · testing only").font(.title2.bold())
+            Text("Tap the map to choose a coordinate for an app you develop. This does not change Find My, other apps, or the iPhone's real GPS location.")
+                .font(.caption).foregroundStyle(.secondary)
+            OmnaAppleMapPicker(position: $chosenLocation)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            Text(String(format: "Test coordinate: %.6f, %.6f", chosenLocation.latitude, chosenLocation.longitude))
+                .font(.footnote.monospaced())
+            HStack {
+                Button("Export GPX for Xcode") { exportTestLocation() }
+                    .buttonStyle(.borderedProminent)
+                if let testGPX {
+                    ShareLink(item: testGPX) { Label("Share GPX", systemImage: "square.and.arrow.up") }
+                }
+            }
+            Text("GPX is for location simulation while debugging with Xcode; it cannot force a third-party app to report this position.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(14)
+    }
+
+    private func exportTestLocation() {
+        let lat = String(format: "%.6f", chosenLocation.latitude)
+        let lon = String(format: "%.6f", chosenLocation.longitude)
+        let gpx = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"OmnaSign\" xmlns=\"http://www.topografix.com/GPX/1/1\"><wpt lat=\"" + lat + "\" lon=\"" + lon + "\"><name>OmnaLocation test</name></wpt></gpx>"
+        do {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("OmnaLocation-" + UUID().uuidString + ".gpx")
+            try gpx.write(to: url, atomically: true, encoding: .utf8)
+            testGPX = url
+        } catch {
+            signer.alert = "Could not export GPX: " + error.localizedDescription
         }
     }
 

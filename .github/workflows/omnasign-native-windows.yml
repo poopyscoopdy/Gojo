@@ -1,0 +1,61 @@
+name: Build native OmnaSign Windows EXE
+on:
+  push:
+    branches: [omnasign-desktop-v5]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/omnasign-native-windows.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: omnasign-native-windows
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish self-contained GUI EXE
+        shell: pwsh
+        run: |
+          dotnet publish desktop/OmnaSignDesktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:PublishTrimmed=false -o publish
+          if (-not (Test-Path "publish/OmnaSignDesktop.exe")) { throw "Missing EXE output" }
+          Get-Item "publish/OmnaSignDesktop.exe" | Format-List Name,Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OmnaSignDesktop-v5-Windows
+          path: publish/OmnaSignDesktop.exe
+          if-no-files-found: error
+      - name: Publish public portable Windows EXE
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "omnasign-desktop-v5-preview"
+          $file = "publish/OmnaSignDesktop.exe"
+          @"
+          OmnaSign Desktop v5 native Windows GUI preview.
+          
+          - A real Windows WinForms app, no browser tab or separate launcher.
+          - IPA signing with separately supplied zsign.exe, .p12 and .mobileprovision.
+          - Embedded web resource editor using Microsoft Edge WebView2.
+          - Apple Maps viewing with GPX export for Xcode location testing.
+          
+          This EXE is NOT code-signed and may trigger Microsoft SmartScreen.
+          Apple Account-only provisioning is not implemented within OmnaSign; the button opens Sideloadly.
+          The app does not spoof device GPS for third-party iOS applications.
+          OmnaAi hosted key is not bundled in the binary.
+          Requires Windows 10/11 x64 and Microsoft WebView2 Runtime.
+          "@ | Out-File -FilePath notes.txt -Encoding utf8
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $file --clobber
+          } else {
+            gh release create $tag $file --target $env:GITHUB_SHA --prerelease --title "OmnaSign Desktop 5.0 — native Windows preview" --notes-file notes.txt
+          }

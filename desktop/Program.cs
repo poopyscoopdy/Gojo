@@ -30,17 +30,19 @@ public sealed class StudioWindow : Form
     private static readonly string Sideloadly = "https://sideloadly.io/";
     private readonly Panel surface = new() { Dock = DockStyle.Fill, BackColor = Bg, AutoScroll = true };
     private readonly Panel sidebar = new() { Dock = DockStyle.Left, Width = 210, BackColor = Color.FromArgb(12, 22, 40) };
-    private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 26, Text = "OmnaSign Desktop 5.0 · No subscription · Local signing", ForeColor = Muted, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0) };
+    private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 26, Text = "OmnaSign Desktop 5.2 · No subscription · Local signing", ForeColor = Muted, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0) };
     private readonly Label header = new() { Dock = DockStyle.Top, Height = 76, Text = "  OmnaSign Desktop     ·     Sign apps, build apps, and test locations", Font = new Font("Segoe UI", 15, FontStyle.Bold), ForeColor = Color.White, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft };
     private readonly TextBox ipa = new(), p12 = new(), profile = new(), zsign = new(), pass = new(), bundle = new();
     private readonly TextBox log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Height = 115 };
     private Button? signButton;
     private WebView2? editorWebView;
     private WebView2? mapsWebView;
+    private Process? activeLocationSession;
+    private bool locationBusy;
 
     public StudioWindow()
     {
-        Text = "OmnaSign Desktop 5.0";
+        Text = "OmnaSign Desktop 5.2";
         Size = new Size(1100, 790);
         MinimumSize = new Size(850, 610);
         StartPosition = FormStartPosition.CenterScreen;
@@ -57,6 +59,7 @@ public sealed class StudioWindow : Form
         AddNav("◎   Apple Maps", ShowMaps);
         AddNav("↓   Downloads", ShowDownloads);
         AddNav("⚙   About / setup", ShowAbout);
+        FormClosed += (_, _) => StopLocationSession();
         ShowHome();
     }
 
@@ -235,7 +238,7 @@ public sealed class StudioWindow : Form
         bar.Controls.Add(Button("Clear simulated location", async (_, _) => await SimulateLocationAsync(true, lat.Text, lon.Text), false, 240));
         bar.Controls.Add(Button("Setup instructions", (_, _) => OpenLink("https://doronz88.github.io/pymobiledevice3/latest/cli/developer/"), false, 175));
         bar.SetFlowBreak(bar.Controls[bar.Controls.Count - 1], true);
-        var note = Label("Experimental device simulation: requires a trusted USB iPhone, Developer Mode, compatible iOS developer services and the separately installed pymobiledevice3 tool. iOS 27 is not verified. It can affect location reports while active; it does NOT hide IP or cellular location.");
+        var note = Label("Experimental device simulation: requires a trusted USB iPhone, Developer Mode, compatible iOS developer services and the separately installed pymobiledevice3 tool. iOS 27 is not verified. It can affect location reports while active; it does NOT hide IP or cellular location. Use Clear afterward.");
         note.ForeColor = Muted; note.MaximumSize = new Size(870, 0);
         bar.Controls.Add(note);
         p.Controls.Add(bar);
@@ -245,58 +248,102 @@ public sealed class StudioWindow : Form
         mapsWebView = LaunchWebView(content, "https://maps.apple.com/?ll=40.7128,-74.0060", "Apple Maps web view unavailable. Enter coordinates above or use the browser.");
     }
 
+    private void StopLocationSession()
+    {
+        var process = activeLocationSession;
+        activeLocationSession = null;
+        if (process == null) return;
+        try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        catch { }
+        try { process.Dispose(); }
+        catch { }
+    }
+
+    private static ProcessStartInfo LocationProcessInfo(bool clear, string latitude = "", string longitude = "")
+    {
+        var start = new ProcessStartInfo("pymobiledevice3") {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        foreach (string arg in new[] { "developer", "dvt", "simulate-location", clear ? "clear" : "set" })
+            start.ArgumentList.Add(arg);
+        if (!clear) {
+            start.ArgumentList.Add("--");
+            start.ArgumentList.Add(latitude);
+            start.ArgumentList.Add(longitude);
+        }
+        return start;
+    }
+
     private async Task SimulateLocationAsync(bool clear, string latitude, string longitude)
     {
-        if (!clear && !TryCoord(latitude, longitude, out _, out _))
-        {
-            MessageBox.Show(this, "Enter valid coordinates first.", "OmnaLocation");
-            return;
+        if (locationBusy) { MessageBox.Show(this, "A location operation is already running."); return; }
+        if (!clear && !TryCoord(latitude, longitude, out _, out _)) {
+            MessageBox.Show(this, "Enter valid latitude and longitude.", "OmnaLocation"); return;
         }
-        var notice = clear ?
-            "Attempt to restore real GPS through Apple's developer simulation service on the connected iPhone?" :
-            "This can change the developer-simulated location reported by a connected iPhone and may affect other apps while active. It is not privacy protection. Use only on a device you own or are allowed to test. Continue?";
-        if (MessageBox.Show(this, notice, "OmnaLocation experimental mode", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        try
-        {
-            var start = new ProcessStartInfo("pymobiledevice3")
-            {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
-            };
-            foreach (string arg in new[] { "developer", "dvt", "simulate-location", clear ? "clear" : "set" }) start.ArgumentList.Add(arg);
-            if (!clear)
-            {
-                TryCoord(latitude, longitude, out var la, out var lo);
-                start.ArgumentList.Add("--");
-                start.ArgumentList.Add(la);
-                start.ArgumentList.Add(lo);
+        var warning = clear ?
+            "Stop developer location simulation and request the phone's real GPS readings?" :
+            "Experimental developer location simulation can affect iPhone Core Location readings while this PC session is running. It is NOT privacy protection, and iOS 27 compatibility is unverified. Use only on your own/test devices. Continue?";
+        if (MessageBox.Show(this, warning, "OmnaLocation", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        locationBusy = true;
+        try {
+            StopLocationSession();
+            TryCoord(latitude, longitude, out var lat, out var lon);
+            var info = LocationProcessInfo(clear, lat, lon);
+            status.Text = clear ? "  Clearing simulated location…" : "  Establishing iPhone developer location session…";
+            if (clear) {
+                using var process = new Process { StartInfo = info };
+                if (!process.Start()) throw new Exception("Could not start the developer tool.");
+                Task<string> output = process.StandardOutput.ReadToEndAsync();
+                Task<string> errorOutput = process.StandardError.ReadToEndAsync();
+                using var limit = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(45));
+                try { await process.WaitForExitAsync(limit.Token); }
+                catch (OperationCanceledException) {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                    throw new Exception("Clearing location timed out. Try reconnecting the iPhone or using the developer CLI directly.");
+                }
+                string details = ((await output) + Environment.NewLine + (await errorOutput)).Trim();
+                if (process.ExitCode != 0)
+                    throw new Exception("The developer tool returned exit code " + process.ExitCode + ".\n" + (details.Length>1800 ? details[^1800..] : details));
+                status.Text = "  Location clear command completed";
+                MessageBox.Show(this, "The developer service reported that simulation was cleared. Verify your real location on the iPhone.", "OmnaLocation");
+            } else {
+                // IMPORTANT: iOS 17+ 'dvt simulate-location set' remains running until interrupted.
+                // Retain the process while active rather than waiting for it to exit.
+                var process = new Process { StartInfo = info, EnableRaisingEvents = true };
+                var logs = new StringBuilder();
+                process.OutputDataReceived += (_, e) => { if (e.Data != null) lock (logs) { logs.AppendLine(e.Data); } };
+                process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (logs) { logs.AppendLine(e.Data); } };
+                if (!process.Start()) throw new Exception("Could not start the developer tool.");
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                await Task.Delay(2700);
+                if (process.HasExited) {
+                    string details;
+                    lock (logs) details = logs.ToString();
+                    int exit = process.ExitCode;
+                    process.Dispose();
+                    throw new Exception("Developer simulation exited early (code " + exit + "). Check your device connection and Developer Mode.\n" + (details.Length>1800 ? details[^1800..] : details));
+                }
+                activeLocationSession = process;
+                process.Exited += (_, _) => {
+                    if (ReferenceEquals(activeLocationSession, process) && !IsDisposed && IsHandleCreated) {
+                        try { BeginInvoke((Action)(() => status.Text = "  Developer location session ended; verify your actual GPS.")); }
+                        catch { }
+                    }
+                };
+                status.Text = "  Developer location session active (verify on iPhone)";
+                MessageBox.Show(this, "Location simulation session is running. Verify the iPhone's location in a compatible app. Keep OmnaSign open while testing, and press 'Clear simulated location' afterward. This does not hide cellular, Wi-Fi or IP location.", "OmnaLocation");
             }
-            status.Text = "  Connecting to developer location simulation…";
-            using var process = new Process { StartInfo = start };
-            if (!process.Start()) throw new Exception("Could not start pymobiledevice3.");
-            var output = process.StandardOutput.ReadToEndAsync();
-            var errors = process.StandardError.ReadToEndAsync();
-            using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(90));
-            try { await process.WaitForExitAsync(timeout.Token); }
-            catch (OperationCanceledException)
-            {
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
-                throw new Exception("Device connection timed out. Check Developer Mode, USB trust, developer services, and iOS compatibility.");
-            }
-            string combined = (await output + Environment.NewLine + await errors).Trim();
-            if (process.ExitCode != 0) throw new Exception("Developer location simulation failed (" + process.ExitCode + ").\n" + (combined.Length>1400 ? combined[^1400..] : combined));
-            status.Text = clear ? "  Location simulation cleared (tool reported success)" : "  Developer location simulation requested successfully";
-            MessageBox.Show(this, clear ? "The developer tool reported that location simulation was cleared. Verify on the iPhone." : "The developer tool reported success. Verify the location on your iPhone; some apps may ignore simulated readings.", "OmnaLocation");
         }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            status.Text = "  pymobiledevice3 missing";
-            MessageBox.Show(this, "pymobiledevice3 is not installed or not on PATH.\n\nInstall Python and the Apple Devices app for Windows. Then install this trusted open-source developer utility with:\n\npy -m pip install -U pymobiledevice3\n\nEnable Developer Mode on your iPhone, connect it over USB, and accept Trust. Support varies by iOS version.", "OmnaLocation setup needed");
+        catch (System.ComponentModel.Win32Exception) {
+            status.Text = "  pymobiledevice3 not installed";
+            MessageBox.Show(this, "The developer tool was not found.\n\nInstall Python and Apple's Windows device support, then run:\npy -m pip install -U pymobiledevice3\n\nConnect a trusted iPhone over USB and enable Developer Mode. Compatibility varies by iOS release.", "OmnaLocation setup");
         }
-        catch (Exception ex)
-        {
-            status.Text = "  Location simulation not confirmed";
-            MessageBox.Show(this, ex.Message, "OmnaLocation could not simulate");
+        catch (Exception e) {
+            status.Text = "  Developer location command did not succeed";
+            MessageBox.Show(this, e.Message, "OmnaLocation error");
         }
+        finally { locationBusy = false; }
     }
 
     private static bool TryCoord(string a, string b, out string lat, out string lon)
@@ -346,7 +393,7 @@ public sealed class StudioWindow : Form
     }
     private void ShowAbout()
     {
-        var p = Page("Setup & privacy", "OmnaSign Desktop 5.0 — native Windows UI with embedded Microsoft WebView2.");
+        var p = Page("Setup & privacy", "OmnaSign Desktop 5.2 — native Windows UI with embedded Microsoft WebView2.");
         p.Controls.Add(Label("Signing uses your local certificate and profile. Apple credentials are never collected here."));
         p.Controls.Add(Label("To sign with only an Apple Account, use the external Sideloadly route until OmnaSign implements verified provisioning. A free Apple account typically has seven-day expiration."));
         p.Controls.Add(Label("OmnaAi API keys should never be embedded in the public installer. A hosted backend with server-held credentials, authentication, and usage limits is needed for bundled AI access."));

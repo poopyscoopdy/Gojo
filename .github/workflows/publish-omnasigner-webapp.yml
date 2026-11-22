@@ -1,0 +1,41 @@
+name: Publish OmnaSigner Web App build
+on:
+  push:
+    branches: [omnasign-pages]
+    paths: ['.github/workflows/publish-omnasigner-webapp.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified iOS build artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 45074663403 --repo "$GITHUB_REPOSITORY" -n OmnaSigner-unsigned-iphone -D dist
+          unzip -t dist/OmnaSigner-unsigned.ipa | tail -n 1
+          unzip -l dist/OmnaSigner-unsigned.ipa | grep 'Payload/OmnaSigner.app/OmnaSigner'
+      - name: Publish versioned preview
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=omnasigner-v1.2-webapp-preview
+          cat > /tmp/notes.md <<'EOF'
+          OmnaSigner for iOS 16 and later, built successfully for ARM64 on a macOS Xcode runner.
+
+          New: in-app **Web App** tab opening OmnaSign's manual/AI project editor, alongside on-device IPA signing, native HTML editor, and Apple Maps GPX testing.
+
+          The native IPA is **UNSIGNED**. Sign it with SideStore, Sideloadly, or another compatible sideloader before installing.
+          The on-device signing UI uses your own .p12 certificate and provisioning profile.
+          OmnaAi's integrated generation currently requires your own provider API key and a network connection. Browser signing and Apple Account auto-provisioning are not implemented.
+          Systemwide device GPS spoofing is not included in the iPhone app; the Windows companion can attempt developer location simulation on supported connected iPhones.
+          A physical iPhone test has not been completed.
+          EOF
+          gh release create "$tag" dist/OmnaSigner-unsigned.ipa --target "$GITHUB_SHA" --prerelease --title "OmnaSigner iPhone — Web App + Map preview" --notes-file /tmp/notes.md

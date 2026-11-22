@@ -29,6 +29,8 @@ struct MainView: View {
                 .tabItem { Label("Install", systemImage: "iphone.gen3") }.tag(2)
             NavigationStack { appleMapScreen.navigationTitle("OmnaLocation") }
                 .tabItem { Label("Map", systemImage: "map.fill") }.tag(3)
+            NavigationStack { webStudioScreen.navigationTitle("OmnaSign Web App") }
+                .tabItem { Label("Web App", systemImage: "globe") }.tag(4)
         }
         .tint(.cyan)
         .preferredColorScheme(.dark)
@@ -193,6 +195,15 @@ struct MainView: View {
         }
     }
 
+    private var webStudioScreen: some View {
+        VStack(spacing: 0) {
+            Text("Online app studio · manual editing and OmnaAi")
+                .font(.caption).foregroundStyle(.secondary)
+                .padding(.vertical, 8)
+            OmnaWebStudioView()
+        }
+    }
+
     private var installScreen: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 17) {
@@ -272,4 +283,18 @@ struct HTMLPreview: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {
         uiView.loadHTMLString(source, baseURL: nil)
     }
+}
+
+struct OmnaWebStudioView: UIViewRepresentable {
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        let web = WKWebView(frame: .zero, configuration: configuration)
+        web.allowsBackForwardNavigationGestures = true
+        if let url = URL(string: "https://omnasign-studio.vercel.app/#webapp/studio") {
+            web.load(URLRequest(url: url))
+        }
+        return web
+    }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
 }

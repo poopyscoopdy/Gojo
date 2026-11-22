@@ -215,30 +215,90 @@ public sealed class StudioWindow : Form
     private void ShowMaps()
     {
         var p = new Panel { BackColor = Bg };
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 118, FlowDirection = FlowDirection.LeftToRight, WrapContents = true, Padding = new Padding(15, 9, 10, 0), BackColor = PanelBg };
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 228, FlowDirection = FlowDirection.LeftToRight, WrapContents = true, Padding = new Padding(15, 9, 10, 0), BackColor = PanelBg };
         var lat = Field(); var lon = Field();
-        lat.Width = 110; lon.Width = 110; lat.Text = "40.7128"; lon.Text = "-74.0060";
+        lat.Width = 112; lon.Width = 112; lat.Text = "40.7128"; lon.Text = "-74.0060";
         bar.Controls.Add(Label("Latitude")); bar.Controls.Add(lat);
         bar.Controls.Add(Label("Longitude")); bar.Controls.Add(lon);
         bar.Controls.Add(Button("Show in Apple Maps", (_, _) =>
         {
-            if (TryCoord(lat.Text, lon.Text, out var a, out var b))
+            if (TryCoord(lat.Text, lon.Text, out var la, out var lo))
             {
-                if (mapsWebView?.CoreWebView2 != null) mapsWebView.CoreWebView2.Navigate("https://maps.apple.com/?ll=" + a + "," + b);
-                else OpenLink("https://maps.apple.com/?ll=" + a + "," + b);
+                if (mapsWebView?.CoreWebView2 != null) mapsWebView.CoreWebView2.Navigate("https://maps.apple.com/?ll=" + la + "," + lo);
+                else OpenLink("https://maps.apple.com/?ll=" + la + "," + lo);
             }
             else MessageBox.Show(this, "Enter valid latitude (-90 to 90) and longitude (-180 to 180).");
-        }, true, 200));
-        bar.Controls.Add(Button("Export Xcode GPX", (_, _) => SaveGpx(lat.Text, lon.Text), false, 190));
-        var note = Label("Test-location selection only. Apple Maps here does NOT change GPS readings for Find My, Snapchat or third-party apps.");
-        note.ForeColor = Muted;
+        }, true, 202));
+        bar.Controls.Add(Button("Export test GPX", (_, _) => SaveGpx(lat.Text, lon.Text), false, 178));
+        bar.SetFlowBreak(bar.Controls[bar.Controls.Count - 1], true);
+        bar.Controls.Add(Button("Simulate on USB iPhone (experimental)", async (_, _) => await SimulateLocationAsync(false, lat.Text, lon.Text), true, 295));
+        bar.Controls.Add(Button("Clear simulated location", async (_, _) => await SimulateLocationAsync(true, lat.Text, lon.Text), false, 240));
+        bar.Controls.Add(Button("Setup instructions", (_, _) => OpenLink("https://doronz88.github.io/pymobiledevice3/latest/cli/developer/"), false, 175));
+        bar.SetFlowBreak(bar.Controls[bar.Controls.Count - 1], true);
+        var note = Label("Experimental device simulation: requires a trusted USB iPhone, Developer Mode, compatible iOS developer services and the separately installed pymobiledevice3 tool. iOS 27 is not verified. It can affect location reports while active; it does NOT hide IP or cellular location.");
+        note.ForeColor = Muted; note.MaximumSize = new Size(870, 0);
         bar.Controls.Add(note);
         p.Controls.Add(bar);
         var content = new Panel { Dock = DockStyle.Fill };
         p.Controls.Add(content);
         SetPage(p);
-        mapsWebView = LaunchWebView(content, "https://maps.apple.com/?ll=40.7128,-74.0060", "Apple Maps web view unavailable. Use the coordinates above and Open in browser.");
+        mapsWebView = LaunchWebView(content, "https://maps.apple.com/?ll=40.7128,-74.0060", "Apple Maps web view unavailable. Enter coordinates above or use the browser.");
     }
+
+    private async Task SimulateLocationAsync(bool clear, string latitude, string longitude)
+    {
+        if (!clear && !TryCoord(latitude, longitude, out _, out _))
+        {
+            MessageBox.Show(this, "Enter valid coordinates first.", "OmnaLocation");
+            return;
+        }
+        var notice = clear ?
+            "Attempt to restore real GPS through Apple's developer simulation service on the connected iPhone?" :
+            "This can change the developer-simulated location reported by a connected iPhone and may affect other apps while active. It is not privacy protection. Use only on a device you own or are allowed to test. Continue?";
+        if (MessageBox.Show(this, notice, "OmnaLocation experimental mode", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        try
+        {
+            var start = new ProcessStartInfo("pymobiledevice3")
+            {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            foreach (string arg in new[] { "developer", "dvt", "simulate-location", clear ? "clear" : "set" }) start.ArgumentList.Add(arg);
+            if (!clear)
+            {
+                TryCoord(latitude, longitude, out var la, out var lo);
+                start.ArgumentList.Add("--");
+                start.ArgumentList.Add(la);
+                start.ArgumentList.Add(lo);
+            }
+            status.Text = "  Connecting to developer location simulation…";
+            using var process = new Process { StartInfo = start };
+            if (!process.Start()) throw new Exception("Could not start pymobiledevice3.");
+            var output = process.StandardOutput.ReadToEndAsync();
+            var errors = process.StandardError.ReadToEndAsync();
+            using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(90));
+            try { await process.WaitForExitAsync(timeout.Token); }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                throw new Exception("Device connection timed out. Check Developer Mode, USB trust, developer services, and iOS compatibility.");
+            }
+            string combined = (await output + Environment.NewLine + await errors).Trim();
+            if (process.ExitCode != 0) throw new Exception("Developer location simulation failed (" + process.ExitCode + ").\n" + (combined.Length>1400 ? combined[^1400..] : combined));
+            status.Text = clear ? "  Location simulation cleared (tool reported success)" : "  Developer location simulation requested successfully";
+            MessageBox.Show(this, clear ? "The developer tool reported that location simulation was cleared. Verify on the iPhone." : "The developer tool reported success. Verify the location on your iPhone; some apps may ignore simulated readings.", "OmnaLocation");
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            status.Text = "  pymobiledevice3 missing";
+            MessageBox.Show(this, "pymobiledevice3 is not installed or not on PATH.\n\nInstall Python and the Apple Devices app for Windows. Then install this trusted open-source developer utility with:\n\npy -m pip install -U pymobiledevice3\n\nEnable Developer Mode on your iPhone, connect it over USB, and accept Trust. Support varies by iOS version.", "OmnaLocation setup needed");
+        }
+        catch (Exception ex)
+        {
+            status.Text = "  Location simulation not confirmed";
+            MessageBox.Show(this, ex.Message, "OmnaLocation could not simulate");
+        }
+    }
+
     private static bool TryCoord(string a, string b, out string lat, out string lon)
     {
         lat = lon = "";

@@ -47,10 +47,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "omnasign-desktop-v5-preview"
+          $tag = "omnasign-desktop-v5.1-preview"
           $file = "publish/OmnaSignDesktop.exe"
           @"
-          OmnaSign Desktop v5 native Windows GUI preview.
+          OmnaSign Desktop v5.1 native Windows GUI preview with experimental developer location simulation.
           
           - A real Windows WinForms app, no browser tab or separate launcher.
           - IPA signing with separately supplied zsign.exe, .p12 and .mobileprovision.
@@ -67,5 +67,5 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $file --clobber
           } else {
-            gh release create $tag $file --target $env:GITHUB_SHA --prerelease --title "OmnaSign Desktop 5.0 — native Windows preview" --notes-file notes.txt
+            gh release create $tag $file --target $env:GITHUB_SHA --prerelease --title "OmnaSign Desktop 5.1 — Windows + experimental USB location" --notes-file notes.txt
           }

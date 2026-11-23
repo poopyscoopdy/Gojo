@@ -255,6 +255,149 @@ async function groq(key,requested,messages,format,tokens,effort,deadline,availab
  }
  throw last||new Error("Time budget exhausted; no model responded");
 }
+
+// OPTIONAL MULTI-PROVIDER CODING. External providers are never available to the
+// public website until the owner configures an encrypted server environment key.
+// The existing Groq engine remains the free/default path.
+const EXTRA_PROVIDERS=Object.freeze({
+ openrouter:{
+  env:"OPENROUTER_API_KEY",name:"OpenRouter",
+  models:"https://openrouter.ai/api/v1/models",
+  chat:"https://openrouter.ai/api/v1/chat/completions"
+ },
+ gateway:{
+  env:"AI_GATEWAY_API_KEY",name:"Vercel AI Gateway",
+  models:"https://ai-gateway.vercel.sh/v1/models",
+  chat:"https://ai-gateway.vercel.sh/v1/chat/completions"
+ }
+});
+const MODEL_FAMILY_PATTERN=/^(?:anthropic\/claude-(?:sonnet|opus)|openai\/gpt-(?:6|5\.6|5\.5)|google\/gemini-(?:3|2\.5)|deepseek\/deepseek|qwen\/qwen3|x-ai\/grok)/i;
+const extraCache=new Map();
+function configuredProvider(name){
+ const cfg=EXTRA_PROVIDERS[name];
+ const key=cfg?String(process.env[cfg.env]||"").trim():"";
+ return key?{...cfg,id:name,key}:null;
+}
+async function extraModels(name){
+ const provider=configuredProvider(name);
+ if(!provider)return[];
+ const old=extraCache.get(name);
+ if(old&&old.expires>Date.now())return old.items;
+ try{
+  const response=await fetch(provider.models,{
+   headers:{Authorization:"Bearer "+provider.key},signal:AbortSignal.timeout(5000)
+  });
+  if(!response.ok)throw Error("Provider model list unavailable");
+  const data=await response.json();
+  const list=(Array.isArray(data.data)?data.data:[])
+   .filter(x=>x&&typeof x.id==="string"&&x.id.length<180&&MODEL_FAMILY_PATTERN.test(x.id))
+   .filter(x=>x.output_modalities===undefined||x.output_modalities.includes("text"));
+  const scored=list.map(x=>{
+   let score=0,id=x.id.toLowerCase();
+   if(/claude-opus/.test(id))score=100;
+   else if(/gpt-6/.test(id))score=95;
+   else if(/claude-sonnet/.test(id))score=85;
+   else if(/gpt-5\.6/.test(id))score=83;
+   else if(/gemini-3/.test(id))score=80;
+   else if(/gpt-5\.5/.test(id))score=76;
+   else if(/deepseek|qwen/.test(id))score=60;
+   else score=50;
+   if(/:free$|preview|experimental/i.test(id))score-=15;
+   return{x,score};
+  }).sort((a,b)=>b.score-a.score||a.x.id.localeCompare(b.x.id));
+  const items=scored.slice(0,12).map(({x})=>({
+   id:name+":"+x.id,
+   label:provider.name+" · "+String(x.name||x.id).slice(0,75),
+   provider:name,tier:"advanced"
+  }));
+  extraCache.set(name,{expires:Date.now()+10*60000,items});
+  return items;
+ }catch{
+  // If discovery fails, do not fabricate model availability.
+  return[];
+ }
+}
+async function configuredModelOptions(){
+ const [groqIds,router,gateway]=await Promise.all([
+  process.env.GROQ_API_KEY?availableGroqModels(String(process.env.GROQ_API_KEY)):Promise.resolve(new Set()),
+  extraModels("openrouter"),extraModels("gateway")
+ ]);
+ return{groq:availableOptions(groqIds),external:[...router,...gateway],groqIds};
+}
+async function externalCodingRequest(modelRef,messages,format,tokens,deadline,trace,stage){
+ const colon=modelRef.indexOf(":");
+ if(colon<0)throw new Error("Unknown provider");
+ const providerName=modelRef.slice(0,colon);
+ const rawModel=modelRef.slice(colon+1);
+ const provider=configuredProvider(providerName);
+ if(!provider||!rawModel)throw new Error("Requested provider is not connected");
+ const models=await extraModels(providerName);
+ if(!models.some(x=>x.id===modelRef))throw new Error("The selected provider model is not available on this account");
+ const schema=JSON.stringify(format?.json_schema?.schema||{}).slice(0,4800);
+ let last;
+ for(let variant=0;variant<2;variant++){
+  const timeRemaining=deadline-Date.now();
+  if(timeRemaining<3300)throw new Error("Time budget exhausted");
+  const requestMessages=[
+   {role:"system",content:"Respond only with valid JSON, no markdown, no prose outside JSON. Ensure all required fields exist. JSON shape: "+schema},
+   ...messages
+  ];
+  const body={
+   model:rawModel,
+   messages:requestMessages,
+   max_tokens:Math.min(tokens,11000)
+  };
+  if(variant===0)body.response_format={type:"json_object"};
+  const headers={"Content-Type":"application/json",Authorization:"Bearer "+provider.key};
+  if(providerName==="openrouter"){
+   headers["HTTP-Referer"]="https://omnasign-studio.vercel.app";
+   headers["X-Title"]="OmnaSign Coding";
+  }
+  let response;
+  try{
+   response=await fetch(provider.chat,{
+    method:"POST",headers,body:JSON.stringify(body),
+    signal:AbortSignal.timeout(Math.min(30000,Math.max(2500,timeRemaining-900)))
+   });
+  }catch(err){
+   last=new UpstreamError(err?.name==="TimeoutError"?408:503,modelRef,"network");
+   trace.push({stage,model:modelRef,status:last.status,format:variant?"plain":"json"});
+   break;
+  }
+  if(!response.ok){
+   last=new UpstreamError(response.status,modelRef,"provider");
+   trace.push({stage,model:modelRef,status:response.status,format:variant?"plain":"json"});
+   if(variant===0&&(response.status===400||response.status===422))continue;
+   break;
+  }
+  const data=await response.json().catch(()=>({}));
+  const raw=data?.choices?.[0]?.message?.content;
+  const content=Array.isArray(raw)?raw.map(x=>x.text||"").join("\n"):raw;
+  try{
+   const result=parseModelJSON(content);
+   trace.push({stage,model:modelRef,status:200,format:variant?"plain":"json"});
+   return result;
+  }catch{
+   last=new UpstreamError(422,modelRef,"invalid_json");
+   trace.push({stage,model:modelRef,status:422,format:variant?"plain":"json"});
+  }
+ }
+ throw last||new Error("External provider failed");
+}
+// Third-party model is used only when it is explicitly selected. On failure,
+// the app falls back to the already-connected Groq service. No new usage charges
+// are incurred for a premium provider merely by opening the editor.
+async function routeCodingModel(groqKey,selected,messages,format,tokens,effort,deadline,available,trace,stage){
+ if(typeof selected==="string"&&(selected.startsWith("openrouter:")||selected.startsWith("gateway:"))){
+  try{return await externalCodingRequest(selected,messages,format,tokens,deadline,trace,stage);}
+  catch(err){
+   if(deadline-Date.now()<3500)throw err;
+   return await groq(groqKey,"auto",messages,format,tokens,effort,deadline,available,trace,stage);
+  }
+ }
+ return await groq(groqKey,selected,messages,format,tokens,effort,deadline,available,trace,stage);
+}
+
 const teaching=[
  "You are OmnaAi Coding, a careful senior full-stack engineer. Solve the user's REAL programming intent rather than loosely imitating it.",
  "Maintain a feature contract across turns. The user's latest request ADDS or MODIFIES functionality; do not silently remove existing screens, file structure, styling, actions, data flow, or previously accepted requirements.",

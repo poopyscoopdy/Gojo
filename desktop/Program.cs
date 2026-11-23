@@ -30,7 +30,7 @@ public sealed class StudioWindow : Form
     private static readonly string Sideloadly = "https://sideloadly.io/";
     private readonly Panel surface = new() { Dock = DockStyle.Fill, BackColor = Bg, AutoScroll = true };
     private readonly Panel sidebar = new() { Dock = DockStyle.Left, Width = 210, BackColor = Color.FromArgb(12, 22, 40) };
-    private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 26, Text = "OmnaSign Desktop 5.2 · No subscription · Local signing", ForeColor = Muted, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0) };
+    private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 26, Text = "OmnaSign Desktop 6.0 · No subscription · Local signing", ForeColor = Muted, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0) };
     private readonly Label header = new() { Dock = DockStyle.Top, Height = 76, Text = "  OmnaSign Desktop     ·     Sign apps, build apps, and test locations", Font = new Font("Segoe UI", 15, FontStyle.Bold), ForeColor = Color.White, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft };
     private readonly TextBox ipa = new(), p12 = new(), profile = new(), zsign = new(), pass = new(), bundle = new();
     private readonly TextBox log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Height = 115 };
@@ -55,6 +55,7 @@ public sealed class StudioWindow : Form
         Controls.Add(status);
         AddNav("⌂   Home", ShowHome);
         AddNav("✦   Sign an IPA", ShowSign);
+        AddNav("   Apple Account signing", ShowAppleAccount);
         AddNav("✎   Create / edit", ShowEditor);
         AddNav("◎   Apple Maps", ShowMaps);
         AddNav("↓   Downloads", ShowDownloads);
@@ -120,7 +121,7 @@ public sealed class StudioWindow : Form
         var p = Page("Your iOS tools. Simpler.", "Choose what you want to do. Advanced configuration stays out of the way until you need it.");
         p.Controls.Add(Label("1    Sign an existing IPA", 17, true));
         p.Controls.Add(Label("Choose your IPA, Apple signing certificate and provisioning profile. Export a signed copy to install."));
-        p.Controls.Add(Actions(Button("Sign an IPA", (_, _) => ShowSign(), true), Button("Apple Account signing (Sideloadly)", (_, _) => OpenLink(Sideloadly))));
+        p.Controls.Add(Actions(Button("Sign an IPA", (_, _) => ShowSign(), true), Button("Sign with Apple Account", (_, _) => ShowAppleAccount())));
         p.Controls.Add(Label("2    Create or edit an app", 17, true));
         p.Controls.Add(Label("Use the embedded web studio to edit supported app resources and preview web-based iOS app projects."));
         p.Controls.Add(Actions(Button("Open App Studio", (_, _) => ShowEditor(), true), Button("Open website in browser", (_, _) => OpenLink(StudioUrl))));
@@ -159,8 +160,8 @@ public sealed class StudioWindow : Form
         bundle.Width = 580;
         p.Controls.Add(bundle);
         signButton = Button("Sign IPA & save", async (_, _) => await SignAsync(), true, 250);
-        p.Controls.Add(Actions(signButton, Button("Use Apple Account (external Sideloadly)", (_, _) => OpenLink(Sideloadly), false, 350)));
-        p.Controls.Add(Label("Apple ID automatic provisioning is not yet built into OmnaSign. The external button opens Sideloadly; it does not send your Apple ID to OmnaSign."));
+        p.Controls.Add(Actions(signButton, Button("Apple Account sign & install", (_, _) => ShowAppleAccount(), false, 290)));
+        p.Controls.Add(Label("Apple Account provisioning uses the bundled open-source iPASide engine when installed. Your credentials are only used by the local engine, not sent to OmnaSign."));
         p.Controls.Add(Label("Signing output"));
         log.Width = 785; log.BackColor = PanelBg; log.ForeColor = Muted;
         p.Controls.Add(log);
@@ -204,6 +205,11 @@ public sealed class StudioWindow : Form
         }
         finally { signButton.Enabled = true; }
     }
+    private void ShowAppleAccount()
+    {
+        SetPage(new AppleAccountPanel());
+    }
+
     private void ShowEditor()
     {
         var p = new Panel { BackColor = Bg };
@@ -395,7 +401,7 @@ public sealed class StudioWindow : Form
     {
         var p = Page("Setup & privacy", "OmnaSign Desktop 5.2 — native Windows UI with embedded Microsoft WebView2.");
         p.Controls.Add(Label("Signing uses your local certificate and profile. Apple credentials are never collected here."));
-        p.Controls.Add(Label("To sign with only an Apple Account, use the external Sideloadly route until OmnaSign implements verified provisioning. A free Apple account typically has seven-day expiration."));
+        p.Controls.Add(Label("Apple Account sign-in, two-factor verification, provisioning and installation use the MIT-licensed iPASide engine bundled with the full Windows package. A free Apple account typically has seven-day expiration."));
         p.Controls.Add(Label("OmnaAi API keys should never be embedded in the public installer. A hosted backend with server-held credentials, authentication, and usage limits is needed for bundled AI access."));
         p.Controls.Add(Label("Location tests are not systemwide iPhone location spoofing."));
         p.Controls.Add(Actions(Button("Open OmnaSign website", (_, _) => OpenLink(StudioUrl), true)));

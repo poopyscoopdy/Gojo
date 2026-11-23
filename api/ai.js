@@ -291,7 +291,7 @@ async function extraModels(name){
   const data=await response.json();
   const list=(Array.isArray(data.data)?data.data:[])
    .filter(x=>x&&typeof x.id==="string"&&x.id.length<180&&MODEL_FAMILY_PATTERN.test(x.id))
-   .filter(x=>x.output_modalities===undefined||x.output_modalities.includes("text"));
+   .filter(x=>!Array.isArray(x.output_modalities)||x.output_modalities.includes("text"));
   const scored=list.map(x=>{
    let score=0,id=x.id.toLowerCase();
    if(/claude-opus/.test(id))score=100;
@@ -450,8 +450,8 @@ module.exports=async function handler(req,res){
   const premium=configured.flat();
   return reply(res,200,{ok:true,provider:"Groq",configured:!!apiKey,
    models:[...availableOptions(ids),...premium],defaultModel:"auto",autoFallback:true,
-   connectedProviders:["Groq",...(configuredProvider("openrouter")?["OpenRouter"]:[]),
-    ...(configuredProvider("gateway")?["Vercel AI Gateway"]:[])],
+   connectedProviders:["Groq",...(premium.some(x=>x.provider==="openrouter")?["OpenRouter"]:[]),
+    ...(premium.some(x=>x.provider==="gateway")?["Vercel AI Gateway"]:[])],
    premiumRequiresOwnerSetup:premium.length===0,
    deepReview:true,history:true,signingCredentialsUploaded:false});
  }

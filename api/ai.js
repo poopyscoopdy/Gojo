@@ -547,10 +547,53 @@ module.exports=async function handler(req,res){
     error:"OmnaAi understood the request but couldn't produce applicable source changes. Your existing project has not been modified. Try breaking the feature into one smaller step.",
     quality,codeGenerated:false,repairAttempted:trace.some(x=>x.stage==="repair")
    });
-  const proposals=assembled.files.slice(0,12);
-  const staticCheck=analyzeFiles(proposals,files,mode);
+  let proposals=assembled.files.slice(0,12);
+  let staticCheck=analyzeFiles(proposals,files,mode);
+  const blockingIssues=issues=>issues.filter(x=>/JavaScript syntax error|invalid JSON|Referenced .*missing|No index\.html was generated/i.test(x));
+  let buildDiagnostics=blockingIssues(staticCheck.warnings);
+  // Automatic compiler-style repair: give the model exact syntax/reference
+  // failures. Its patched result must pass the same checks before release.
+  if(buildDiagnostics.length&&deadline-Date.now()>8200){
+   const currentMap={...files};
+   for(const item of proposals)currentMap[item.path]=item.content;
+   const target=proposals.find(x=>/\.js$/i.test(x.path))?.path||
+                proposals[0]?.path||"index.html";
+   const repairInput=[
+    "PROJECT TASK: "+prompt,
+    "REQUIREMENTS: "+JSON.stringify(plan?.requirements||[]),
+    "THE CURRENT CODE FAILED STATIC CHECKS: "+JSON.stringify(buildDiagnostics),
+    "TARGET: "+target,
+    "EXISTING GENERATED SOURCE: "+JSON.stringify(currentMap).slice(0,45000),
+    "Fix the actual errors. Return exact text patches or full corrected files, not just analysis.",
+    "Keep the working requirements and existing feature set. Return fields files, patches, checks, limitations and summary."
+   ].join("\n\n");
+   try{
+    const repair=await routeCodingModel(key,model,[
+     {role:"system",content:"You are OmnaAi's code repair engineer. Fix every reported syntax and file-reference error. Return usable, complete corrected source as structured JSON. No empty proposals."},
+     {role:"user",content:repairInput}
+    ],codeSchema,6000,"low",deadline,available,trace,"diagnostics");
+    const changed=assembleChanges(repair,currentMap);
+    if(changed.files.length){
+     const merged=new Map(proposals.map(x=>[x.path,x.content]));
+     for(const fix of changed.files)merged.set(fix.path,fix.content);
+     const revised=[...merged].map(([path,content])=>({path,content}));
+     const revisedCheck=analyzeFiles(revised,files,mode);
+     if(blockingIssues(revisedCheck.warnings).length<=buildDiagnostics.length){
+      proposals=revised;staticCheck=revisedCheck;
+      buildDiagnostics=blockingIssues(revisedCheck.warnings);
+     }
+    }
+   }catch{/* The blocking issues still prevent a misleading "working code" claim. */}
+  }
+  if(buildDiagnostics.length){
+   return reply(res,422,{
+    error:"OmnaAi generated source with code errors, and automatic repair couldn't make it safe to apply. Your project remains unchanged.",
+    diagnostics:buildDiagnostics.slice(0,6),codeGenerated:false
+   });
+  }
   let warnings=[...staticCheck.warnings,...assembled.warnings];
-  const tests=[...staticCheck.checks,...assembled.checks];
+  const tests=[...staticCheck.checks,...assembled.checks,
+   ...(trace.some(t=>t.stage==="diagnostics"&&t.status===200)?["AI diagnostic repair attempted and source rechecked."]:[])];
   const limitations=arrayStrings(built.limitations,10,250);
   const requirements=plan?arrayStrings(plan.requirements,16,250):[];
   if(quality==="deep"&&proposals.length&&deadline-Date.now()>8000){
@@ -582,7 +625,8 @@ module.exports=async function handler(req,res){
    provider:modelUsed.startsWith("openrouter:")?"OpenRouter":modelUsed.startsWith("gateway:")?"Vercel AI Gateway":"Groq",
    quality,projectType,
    autoFallback:buildRoute.some(x=>x.status!==200)||(model!=="auto"&&modelUsed!==model),
-   patchesApplied:assembled.patchCount,codeGenerated:true,repairUsed:trace.some(x=>x.stage==="repair"&&x.status===200),
+   patchesApplied:assembled.patchCount,codeGenerated:true,
+   repairUsed:trace.some(x=>(x.stage==="repair"||x.stage==="diagnostics")&&x.status===200),
    modelAttempts:buildRoute.map(x=>({model:x.model,status:x.status,format:x.format})).slice(0,8),
    requirements,tests:tests.slice(0,25),warnings:[...new Set(warnings)].slice(0,14),
    limitations,reviewed:!!review,elapsedSeconds:Math.round((Date.now()-start)/1000)

@@ -1,0 +1,43 @@
+name: OmnaSign Creator live coding smoke test
+on:
+  push:
+    branches: [omnasign-project-library-and-ai-repair-v6]
+    paths: ['.github/workflows/omnasign-live-code-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test real Groq code generation through OmnaSign
+        env:
+          API: https://omnasign-studio.vercel.app/api/ai
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          payload=json.dumps({
+            "model":"openai/gpt-oss-20b","quality":"fast","projectType":"web","mode":"create",
+            "prompt":"Create a small working click counter web app with a button and a number, using index.html and app.js.",
+            "files":{},"projectGoal":"","changeHistory":[],"promptHistory":[]
+          }).encode()
+          req=urllib.request.Request("https://omnasign-studio.vercel.app/api/ai",
+            data=payload,headers={"Origin":"https://omnasign-studio.vercel.app","Content-Type":"application/json"},
+            method="POST")
+          try:
+            with urllib.request.urlopen(req,timeout=80) as response:
+              body=json.load(response)
+              print("HTTP:",response.status)
+          except urllib.error.HTTPError as e:
+            print("HTTP ERROR:",e.code,e.read().decode()[:2000])
+            raise
+          files=body.get("files",[])
+          print("CODE GENERATED:",body.get("codeGenerated"))
+          print("FILES:",[f.get("path") for f in files])
+          print("REPAIR:",body.get("repairUsed"))
+          print("MODEL:",body.get("model"))
+          assert body.get("codeGenerated") and files, "No usable code returned"
+          assert any("content" in f and f["content"] for f in files)
+          PY

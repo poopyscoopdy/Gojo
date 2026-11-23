@@ -141,31 +141,86 @@ function analyzeFiles(changes,current,mode){
  return {warnings,checks};
 }
 function apiError(status){
- if(status===401||status===403)return{code:503,message:"Groq rejected the server API key; the site owner must update it."};
- if(status===429)return{code:429,message:"Groq quota or rate limit reached; please retry later."};
- if(status===413)return{code:413,message:"Project is too large for Groq; reduce files."};
- return{code:502,message:"Groq couldn't complete the coding request. Please retry."};
+ if(status===401||status===403)return{code:503,message:"The Groq server key was rejected. The site owner needs to rotate it."};
+ if(status===429)return{code:429,message:"Groq is rate-limiting this account. Multiple models were tried; please retry later."};
+ if(status===400)return{code:502,message:"Groq rejected the coding request format. OmnaAi tried compatible options and backup models. Try Fast Coding or a smaller change."};
+ if(status===404)return{code:502,message:"The selected Groq model is unavailable. Try Auto for a different model."};
+ if(status===413)return{code:413,message:"Project context exceeds the provider limit. Reduce the project files sent."};
+ if(status===408||status>=500)return{code:502,message:"Groq's model service is temporarily unavailable. Backup models were attempted; please retry."};
+ return{code:502,message:"Groq couldn't complete the coding request after trying backups. Check the model and try again."};
 }
 class UpstreamError extends Error{
- constructor(status){super("Groq API failed");this.status=status;}
+ constructor(status,model,category="provider"){super("Groq request failed");this.status=status;this.model=model;this.category=category;}
 }
-async function groq(key,model,messages,format,tokens,effort,deadline){
- const left=deadline-Date.now();
- if(left<3500)throw new Error("Time budget exhausted");
- const abort=AbortSignal.timeout(Math.min(48000,left-800));
- const response=await fetch("https://api.groq.com/openai/v1/chat/completions",{
-  method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-  body:JSON.stringify({
-   model,messages,response_format:format,reasoning_effort:effort,
-   reasoning_format:"hidden",
-   temperature:0.14,max_completion_tokens:tokens
-  }),
-  signal:abort
- });
- if(!response.ok)throw new UpstreamError(response.status);
- const json=await response.json().catch(()=>({}));
- try{return JSON.parse(json?.choices?.[0]?.message?.content||"");}
- catch{throw new Error("Groq returned incomplete source JSON");}
+function parseModelJSON(content){
+ if(typeof content!=="string"||!content.trim())throw Error("Incomplete model response");
+ let raw=content.trim();
+ try{return JSON.parse(raw);}
+ catch{
+  const a=raw.indexOf("{"),b=raw.lastIndexOf("}");
+  if(a>=0&&b>a)return JSON.parse(raw.slice(a,b+1));
+  throw Error("Incomplete JSON from model");
+ }
+}
+// Retry 400 with JSON object mode and fewer model-specific parameters.
+// Prior GPT-OSS requests included an unsupported reasoning_format parameter; it is removed.
+async function requestModel(key,model,messages,format,tokens,effort,deadline,trace,stage){
+ const spec=MODEL_CATALOG[model]||MODEL_CATALOG["openai/gpt-oss-20b"];
+ let last;
+ for(let variant=0;variant<2;variant++){
+  const remaining=deadline-Date.now();
+  if(remaining<2500)throw Error("Time budget exhausted");
+  const isSchema=!!spec.schema&&variant===0;
+  const payload={
+   model,messages,
+   response_format:isSchema?format:{type:"json_object"},
+   max_completion_tokens:tokens
+  };
+  if(spec.reasoning&&variant===0)payload.reasoning_effort=spec.reasoning;
+  let response;
+  try{
+   response=await fetch("https://api.groq.com/openai/v1/chat/completions",{
+    method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+    body:JSON.stringify(payload),
+    signal:AbortSignal.timeout(Math.max(2200,Math.min(30000,remaining-700)))
+   });
+  }catch(err){
+   last=new UpstreamError(err?.name==="TimeoutError"?408:503,model,"network");
+   trace.push({stage,model,status:last.status,format:isSchema?"schema":"json"});
+   break;
+  }
+  if(!response.ok){
+   last=new UpstreamError(response.status,model,response.status===400?"parameters":"provider");
+   trace.push({stage,model,status:response.status,format:isSchema?"schema":"json"});
+   if(response.status===400&&variant===0)continue;
+   break;
+  }
+  const data=await response.json().catch(()=>({}));
+  try{
+   const result=parseModelJSON(data?.choices?.[0]?.message?.content);
+   trace.push({stage,model,status:200,format:isSchema?"schema":"json"});
+   return result;
+  }catch{
+   last=new UpstreamError(422,model,"invalid_json");
+   trace.push({stage,model,status:422,format:isSchema?"schema":"json"});
+   if(variant===0)continue;
+  }
+ }
+ throw last||new UpstreamError(502,model,"unknown");
+}
+// Tries the preferred model first, then alternatives on provider rejections or timeouts.
+async function groq(key,requested,messages,format,tokens,effort,deadline,available,trace,stage){
+ const candidates=fallbackOrder(requested,available).slice(0,4);
+ let last;
+ for(const model of candidates){
+  if(deadline-Date.now()<3500)break;
+  try{return await requestModel(key,model,messages,format,tokens,effort,deadline,trace,stage);}
+  catch(err){
+   last=err;
+   if(err?.status===401||err?.status===403)break;
+  }
+ }
+ throw last||new Error("Time budget exhausted; no model responded");
 }
 const teaching=[
  "You are OmnaAi Coding, a careful senior full-stack engineer. Solve the user's REAL programming intent rather than loosely imitating it.",

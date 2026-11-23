@@ -1,0 +1,40 @@
+name: Publish prebuilt OmnaSign 6 Windows bundle
+on:
+  push:
+    branches: [omnasign-v6-integrated-signing]
+    paths: ['.github/workflows/publish-omnasign-v6.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download already-tested Windows release artifact
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh run download 45094749264 --repo "$GITHUB_REPOSITORY" -n OmnaSign-6-Windows-Full-Bundle -D .
+          test -s OmnaSign-Windows-v6-Full-Bundle.zip
+          unzip -t OmnaSign-Windows-v6-Full-Bundle.zip | tail -n 2
+      - name: Publish versioned release without rebuilding
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cat > notes.md <<'EOF'
+          **OmnaSign Desktop v6 Beta — Windows 10/11 x64**
+
+          The full ZIP contains the native OmnaSign desktop app and MIT-licensed iPASide Apple Account signing engine. Extract ALL files; do not run the EXE inside the ZIP.
+
+          Apple Account sign-in, Apple 2FA, device detection, provisioning, IPA signing/save, and USB sideloading are wired through the bundled local engine. Apple ID credentials remain on your computer and communicate with Apple, not OmnaSign's public web server.
+
+          **Verified:** Windows CI engine-launch and GUI startup smoke tests. **Unverified:** real Apple Account sign-in, provisioning and iPhone installation (needs your own trusted physical iPhone).
+
+          Free Apple developer profiles normally expire after 7 days. Beta installer is not code-signed. The IPA signing workflow cannot bypass Apple's provisioning requirements.
+          EOF
+          gh release create "omnasign-v6-apple-account-beta" OmnaSign-Windows-v6-Full-Bundle.zip --target "$GITHUB_SHA" --title "OmnaSign 6 — Apple Account signing beta" --prerelease --notes-file notes.md

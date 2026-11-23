@@ -97,6 +97,8 @@ function openTool(tool){
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>openPage(b.dataset.page));
 let archive=null,selected=null,sourceType='web',unsaved=false;
 let projectGoal='',changeHistory=[],pendingAiRequest='',pendingAiMode='',pendingAiSummary='';
+let projectId='',promptHistory=[],pendingHistoryId='';
+const OMNA_HISTORY_KEY='omnasign_omnaai_prompt_history_v4';
 const OMNA_DRAFT_KEY='omnasign_studio_local_draft_v3';
 const E=id=>document.getElementById(id);
 const initial=location.hash.replace(/^#/,'');if(initial.startsWith('webapp/'))openTool(initial.split('/')[1]);else if(initial==='downloads')openPage('downloads');else if(tools.includes(initial))openTool(initial);else openTool('studio');
@@ -115,7 +117,7 @@ async function saveLocalDraft(){
   }
   if(Object.keys(files).length){
    localStorage.setItem(OMNA_DRAFT_KEY,JSON.stringify({
-    files,projectGoal,changeHistory:changeHistory.slice(-6),
+    files,projectGoal,projectId,changeHistory:changeHistory.slice(-12),
     savedAt:Date.now(),sourceType:'web'
    }));
   }
@@ -136,7 +138,8 @@ async function restoreLocalDraft(){
   if(!Object.keys(restored.files).length)return;
   archive=restored;sourceType='web';selected=null;unsaved=false;
   projectGoal=typeof saved.projectGoal==='string'?saved.projectGoal.slice(0,650):'';
-  changeHistory=Array.isArray(saved.changeHistory)?saved.changeHistory.filter(x=>typeof x==='string').slice(-6):[];
+  projectId=typeof saved.projectId==='string'?saved.projectId.slice(0,90):'legacy-project';
+  changeHistory=Array.isArray(saved.changeHistory)?saved.changeHistory.filter(x=>typeof x==='string').slice(-12):[];
   await refreshFiles();
   const names=Object.keys(archive.files).filter(n=>!archive.files[n].dir&&textFile(n));
   if(names.length)await selectFile(names.find(n=>/(^|\/)index\.html$/i.test(n))||names[0]);
@@ -144,6 +147,83 @@ async function restoreLocalDraft(){
   status('Restored your saved web project. The next OmnaAi prompt will improve this app.');
  }catch(err){/* Storage can be disabled in some browsers. */}
 }
+
+function loadPromptHistory(){
+ try{
+  const data=JSON.parse(localStorage.getItem(OMNA_HISTORY_KEY)||'[]');
+  promptHistory=Array.isArray(data)?data.filter(x=>x&&typeof x.prompt==='string').slice(-100):[];
+ }catch{promptHistory=[];}
+ renderPromptHistory();
+}
+function persistPromptHistory(){
+ try{localStorage.setItem(OMNA_HISTORY_KEY,JSON.stringify(promptHistory.slice(-100)));}
+ catch{/* Private browsing or storage quota may block saving; continue in memory. */}
+ renderPromptHistory();
+}
+function historyTime(value){
+ try{return new Date(value).toLocaleString();}
+ catch{return '';}
+}
+function reuseHistoryPrompt(id){
+ const entry=promptHistory.find(x=>x.id===id);if(!entry)return;
+ E('aiPrompt').value=entry.prompt;
+ E('aiMode').value=archive?'edit':'create';
+ updateAiContinuityNote();
+ openTool('ai');
+ E('aiPrompt').focus();
+ E('aiStatus').textContent='Reused an earlier prompt. Edit it before generating if needed.';
+}
+function renderPromptHistory(){
+ const view=E('aiHistoryList');if(!view)return;
+ view.replaceChildren();
+ if(!promptHistory.length){
+  const p=document.createElement('p');p.className='muted';
+  p.textContent='No prompts yet. New AI requests will appear here, including your earlier instructions for this project.';
+  view.appendChild(p);return;
+ }
+ const current=promptHistory.filter(e=>e.projectId===projectId);
+ const items=(current.length?[...current].reverse():[...promptHistory].reverse()).slice(0,40);
+ for(const entry of items){
+  const card=document.createElement('div');card.className='omna-history-item';
+  const meta=document.createElement('div');meta.className='omna-history-meta';
+  const stamp=document.createElement('span');stamp.textContent=historyTime(entry.createdAt);
+  const state=document.createElement('span');
+  state.textContent=(entry.status||'submitted').toUpperCase()+' · '+(entry.mode==='edit'?'Edit':'Create')+
+   (entry.quality==='deep'?' · Deep Coding':' · Fast');
+  meta.append(stamp,state);card.appendChild(meta);
+  const prompt=document.createElement('p');prompt.className='omna-history-prompt';
+  prompt.textContent=entry.prompt;card.appendChild(prompt);
+  if(entry.summary){const note=document.createElement('p');note.className='omna-history-summary';note.textContent=entry.summary;card.appendChild(note);}
+  const controls=document.createElement('div');controls.className='omna-history-controls';
+  const reuse=document.createElement('button');reuse.type='button';reuse.className='btn small';reuse.textContent='Use prompt again';reuse.onclick=()=>reuseHistoryPrompt(entry.id);
+  controls.appendChild(reuse);card.appendChild(controls);view.appendChild(card);
+ }
+}
+function createPromptEntry(props){
+ const id='req-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
+ promptHistory.push({
+  id,projectId:projectId||'new-project',createdAt:new Date().toISOString(),
+  prompt:String(props.prompt||'').slice(0,3500),mode:props.mode||'edit',
+  quality:props.quality||'deep',status:'submitted',summary:''
+ });
+ promptHistory=promptHistory.slice(-100);persistPromptHistory();return id;
+}
+function updatePromptEntry(id,fields){
+ const item=promptHistory.find(x=>x.id===id);if(!item)return;
+ Object.assign(item,fields);persistPromptHistory();
+}
+function clearPromptHistory(){
+ if(!window.confirm('Clear all locally stored OmnaAi prompt history? This does not delete your project files.'))return;
+ promptHistory=[];persistPromptHistory();
+ E('aiStatus').textContent='Prompt history cleared. Your project remains unchanged.';
+}
+function exportPromptHistory(){
+ const file=new Blob([JSON.stringify(promptHistory,null,2)],{type:'application/json'});
+ const url=URL.createObjectURL(file),a=document.createElement('a');
+ a.href=url;a.download='OmnaAi-prompt-history.json';a.click();
+ setTimeout(()=>URL.revokeObjectURL(url),12000);
+}
+
 function updateAiContinuityNote(){
  const el=E('aiContinuityNote');if(!el)return;
  const hasProject=!!archive && Object.values(archive.files).some(f=>!f.dir);
@@ -154,15 +234,15 @@ function updateAiContinuityNote(){
   'Editing the current app. OmnaAi receives its existing source, original goal and recent approved changes.':
   'Your first request creates an app. After applying, future prompts continue improving that same app.';
 }
-window.addEventListener('load',()=>{restoreLocalDraft().then(updateAiContinuityNote);});
+window.addEventListener('load',()=>{loadPromptHistory();restoreLocalDraft().then(()=>{updateAiContinuityNote();renderPromptHistory();});});
 
 function status(v){E('studioStatus').textContent=v}
 function markUnsaved(){unsaved=true;E('fileHeading').textContent=(selected||'Source editor')+' • Unsaved'}
 function textFile(path){return /\.(html?|css|js|mjs|json|xml|txt|md|svg|plist|strings|yml|yaml)$/i.test(path)}
 async function refreshFiles(){if(!archive)return;const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x)).slice(0,500);E('fileCount').textContent=String(names.length);E('fileList').innerHTML='';names.forEach(name=>{let b=document.createElement('button');b.className='file'+(name===selected?' active':'');b.textContent=name;b.onclick=()=>selectFile(name);E('fileList').appendChild(b)});if(!names.length)status('No editable text resources were found in this archive.')}
 async function selectFile(name){if(unsaved)await saveFile();selected=name;try{E('editor').value=await archive.file(name).async('string');E('fileHeading').textContent=name;unsaved=false;await refreshFiles();if(/\.html?$/i.test(name))renderPreview()}catch(e){status('Cannot open this file: '+e.message)}}
-async function newProject(){if(typeof JSZip==='undefined'){status('ZIP library did not load. Check internet access.');return}projectGoal='';changeHistory=[];archive=new JSZip();archive.file('index.html','<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Omna App</title><style>body{font-family:system-ui;text-align:center;padding:60px;background:#121c3f;color:white}h1{font-size:36px}</style></head><body><h1>My Omna App</h1><p>Edit this HTML and refresh preview!</p></body></html>');sourceType='web';selected=null;await refreshFiles();await selectFile('index.html');E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();status('New web project. Export will be a web-project ZIP, not an installable IPA.')}
-async function importArchive(file){if(!file)return;if(typeof JSZip==='undefined'){status('ZIP library unavailable.');return}try{archive=await JSZip.loadAsync(file);sourceType=/\.ipa$/i.test(file.name)?'ipa':'zip';selected=null;unsaved=false;projectGoal='Imported project: '+file.name;changeHistory=[];await refreshFiles();const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x));if(names.length)await selectFile(names.find(x=>/index\.html$/i.test(x))||names[0]);E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();status('Imported '+file.name+'. Edit supported files, then export and re-sign any modified IPA.')}catch(e){status('Could not open archive: '+e.message)}}
+async function newProject(){if(typeof JSZip==='undefined'){status('ZIP library did not load. Check internet access.');return}projectGoal='';changeHistory=[];projectId='project-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7);archive=new JSZip();archive.file('index.html','<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Omna App</title><style>body{font-family:system-ui;text-align:center;padding:60px;background:#121c3f;color:white}h1{font-size:36px}</style></head><body><h1>My Omna App</h1><p>Edit this HTML and refresh preview!</p></body></html>');sourceType='web';selected=null;await refreshFiles();await selectFile('index.html');E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();status('New web project. Export will be a web-project ZIP, not an installable IPA.')}
+async function importArchive(file){if(!file)return;if(typeof JSZip==='undefined'){status('ZIP library unavailable.');return}try{archive=await JSZip.loadAsync(file);sourceType=/\.ipa$/i.test(file.name)?'ipa':'zip';selected=null;unsaved=false;projectGoal='Imported project: '+file.name;projectId='import-'+Date.now().toString(36);changeHistory=[];await refreshFiles();const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x));if(names.length)await selectFile(names.find(x=>/index\.html$/i.test(x))||names[0]);E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();status('Imported '+file.name+'. Edit supported files, then export and re-sign any modified IPA.')}catch(e){status('Could not open archive: '+e.message)}}
 async function saveFile(){if(!archive||!selected)return;archive.file(selected,E('editor').value);unsaved=false;E('fileHeading').textContent=selected;await saveLocalDraft();status('Saved '+selected+' into local archive.')}
 async function exportArchive(){if(!archive){status('Open an IPA or create a project first.');return}try{await saveFile();const blob=await archive.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=sourceType==='ipa'?'OmnaSign-edited-REQUIRES-RESIGN.ipa':'OmnaSign-web-project.zip';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),15000);status('Archive exported. Re-sign any modified IPA with compatible credentials before installing.')}catch(e){status('Export failed: '+e.message)}}
 async function renderPreview(){if(!archive){E('preview').srcdoc='<p style="font-family:system-ui">Open a web project to preview.</p>';return}try{if(unsaved)await saveFile();const names=Object.keys(archive.files);const html=names.find(n=>/index\.html$/i.test(n))||(selected&&/\.html?$/i.test(selected)?selected:null);if(!html){E('preview').srcdoc='<p style="font-family:system-ui">This project does not contain an HTML preview.</p>';return}let content=await archive.file(html).async('string');const parent=html.slice(0,html.lastIndexOf('/')+1);for(const [attr,tag] of [['href','link'],['src','script']]){const re=attr==='href'?/<link\b[^>]*href=["']([^"']+\.css)["'][^>]*>/gi:/<script\b[^>]*src=["']([^"']+\.js)["'][^>]*><\/script>/gi;const found=[...content.matchAll(re)];for(const m of found){const path=parent+m[1].replace(/^\.\//,'');if(archive.file(path)){const source=await archive.file(path).async('string');content=content.replace(m[0],attr==='href'?'<style>'+source+'</style>':'<script>'+source.replace(/<\/script/gi,'<\\/script')+'<\/script>')}}}E('preview').srcdoc=content;status('Preview refreshed. This is browser rendering, not a native iOS preview.')}catch(e){status('Preview failed: '+e.message)}}

@@ -1,0 +1,120 @@
+name: Build OmnaSign 6 — native Windows + Apple Account engine
+on:
+  push:
+    branches: [omnasign-v6-integrated-signing]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/build-omnasign-v6.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: omnasign-v6-windows
+  cancel-in-progress: true
+jobs:
+  full-bundle:
+    runs-on: windows-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Download pinned MIT-licensed iPASide engine source
+        shell: pwsh
+        run: |
+          git clone --quiet https://github.com/pwnapplehat/iPASide.git upstream-ipaside
+          git -C upstream-ipaside checkout cd27ac986a2f048a7075f3d15ab8587ae4ac8730
+          $commit = (git -C upstream-ipaside rev-parse HEAD).Trim()
+          if ($commit -ne 'cd27ac986a2f048a7075f3d15ab8587ae4ac8730') { throw "Unexpected upstream commit" }
+          Write-Host "Pinned upstream iPASide at $commit"
+      - name: Create portable embedded Apple Account engine
+        shell: pwsh
+        run: |
+          Push-Location upstream-ipaside
+          try {
+            pwsh -NoProfile -File packaging/build-engine.ps1 -Python (Get-Command python).Source
+            if ($LASTEXITCODE -ne 0) { throw "Portable engine failed" }
+          } finally {
+            Pop-Location
+          }
+          if (-not (Test-Path upstream-ipaside/dist/engine/python/python.exe)) { throw "Missing engine runtime" }
+      - name: Build self-contained native GUI
+        shell: pwsh
+        run: |
+          dotnet publish desktop/OmnaSignDesktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:DebugType=None -o publish
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path publish/OmnaSignDesktop.exe)) { throw "Windows build failed" }
+      - name: Assemble portable Windows bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release/OmnaSign-6/engine | Out-Null
+          Copy-Item publish/OmnaSignDesktop.exe release/OmnaSign-6/OmnaSignDesktop.exe
+          Copy-Item upstream-ipaside/dist/engine/python release/OmnaSign-6/engine/python -Recurse
+          Copy-Item upstream-ipaside/LICENSE release/OmnaSign-6/iPASide-MIT-LICENSE.txt
+          @"
+          OmnaSign Desktop v6 - Windows x64
+          --------------------------------
+          1. Unzip the FULL bundle.
+          2. Run OmnaSignDesktop.exe from inside the extracted OmnaSign-6 folder.
+          3. Choose Apple Account signing, sign in, complete Apple 2FA.
+          4. Trust your connected iPhone, choose an IPA, then sign / install or sign / save.
+          5. Manual certificate signing is still available using zsign.exe (separate tool).
+          6. Experimental USB developer-location testing uses a separately installed pymobiledevice3 command.
+          7. The embedded MIT-licensed iPASide engine implements Apple account login and provisioning.
+          No Apple ID password is stored by OmnaSign. Its engine maintains its own Apple session.
+          Apple ID service compatibility and real IPA installation have not been verified in this CI build.
+          Free Apple provisioning expires after approximately seven days.
+          "@ | Out-File -FilePath release/OmnaSign-6/README.txt -Encoding utf8
+          Get-ChildItem release/OmnaSign-6 | Select-Object Name
+      - name: Verify engine and native UI startup
+        shell: pwsh
+        run: |
+          & release/OmnaSign-6/engine/python/python.exe -m ipaside_engine version
+          if ($LASTEXITCODE -ne 0) { throw "Bundled Apple Account engine failed to start" }
+          $exe = (Resolve-Path "release/OmnaSign-6/OmnaSignDesktop.exe").Path
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 7
+          $p.Refresh()
+          if ($p.HasExited) { throw "Native window exited early: $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "Native OmnaSign Windows startup smoke test passed."
+      - name: Package ZIP with complete engine
+        shell: pwsh
+        run: |
+          Compress-Archive -Path release/OmnaSign-6 -DestinationPath OmnaSign-Windows-v6-Full-Bundle.zip -CompressionLevel Optimal
+          $size = [math]::Round((Get-Item OmnaSign-Windows-v6-Full-Bundle.zip).Length / 1MB, 1)
+          Write-Host "Full bundle: $size MB"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OmnaSign-6-Windows-Full-Bundle
+          path: OmnaSign-Windows-v6-Full-Bundle.zip
+          if-no-files-found: error
+      - name: Publish beta release
+        shell: pwsh
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "omnasign-v6-apple-account-beta"
+          @"
+          OmnaSign Desktop 6 for Windows 10/11 x64.
+          
+          The full ZIP includes the native OmnaSign EXE plus the pinned MIT-licensed iPASide Apple Account signing engine.
+          Extract the entire ZIP; a standalone EXE cannot use the bundled Apple Account engine without the engine folder.
+          
+          Apple account login, 2FA, provisioning, IPA re-signing and USB sideloading are handled by the local open-source engine.
+          The Windows GUI startup and engine version checks are tested in CI. Real Apple login and real iPhone signing/install cannot be tested without your account and trusted device.
+          Apple free personal team provisioning expires after 7 days, subject to Apple's limits.
+          Do not share Apple login credentials in bug reports.
+          
+          Windows binaries are unsigned and may show a SmartScreen warning.
+          "@ | Out-File -FilePath notes.md -Encoding utf8
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag OmnaSign-Windows-v6-Full-Bundle.zip publish/OmnaSignDesktop.exe --clobber
+          } else {
+            gh release create $tag OmnaSign-Windows-v6-Full-Bundle.zip publish/OmnaSignDesktop.exe --target $env:GITHUB_SHA --prerelease --title "OmnaSign 6 — Apple Account signing beta" --notes-file notes.md
+          }

@@ -13,7 +13,13 @@ main{max-width:1190px;margin:0 auto;padding:25px 24px 80px}.eyebrow{color:#a5bff
 .omna-history-controls{display:flex;gap:8px;margin-top:9px}
 .omna-checks{border:1px solid #31405e;border-radius:11px;padding:12px;background:#111e34;color:#afc1dd;font-size:12px}
 .omna-checks ul{padding-left:19px;margin:8px 0}.omna-checks li{margin:5px 0}
-.omna-checks .omna-warning{color:#edc897}.omna-checks h4{font-size:13px;color:#ebf0ff;margin:10px 0 4px}</style></head><body>
+.omna-checks .omna-warning{color:#edc897}.omna-checks h4{font-size:13px;color:#ebf0ff;margin:10px 0 4px}.omna-project-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
+.omna-project-bar input{width:min(320px,100%)}.omna-project-bar label{font-weight:700;font-size:13px}
+.omna-project-row{border:1px solid #32415f;border-radius:12px;padding:14px;margin:10px 0;display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.omna-project-title{font-size:14px;font-weight:750}.omna-project-meta{font-size:12px;color:#a4b9da;margin-top:5px}
+.omna-project-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.omna-ai-project{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid #35466b;border-radius:12px;padding:11px;margin-bottom:15px;flex-wrap:wrap}
+.omna-ai-project strong{font-size:13px;color:#d4e2ff}</style></head><body>
 <header><div class="logo"><span class="emblem">✦</span> OmnaSign</div><nav class="nav"><button data-page="webapp" class="active">Web App</button><button data-page="downloads">Downloads</button></nav></header>
 <main>
 <section id="webapp">
@@ -25,7 +31,11 @@ main{max-width:1190px;margin:0 auto;padding:25px 24px 80px}.eyebrow{color:#a5bff
 <button class="btn small tool-tab" data-tool="ai" onclick="openTool('ai')">✧ OmnaAi</button>
 <button class="btn small tool-tab" data-tool="maps" onclick="openTool('maps')">◎ Location</button></div>
 <section id="studio" class="tool-page"><div class="eyebrow">OmnaSign Studio</div><h2>Edit your app in your browser</h2><p class="muted">Create a basic web project, or open an IPA/ZIP to edit supported HTML, CSS, JavaScript, JSON and text files. Modifying a signed IPA invalidates its signature — re-sign before installation.</p>
-<div class="toolbar"><button class="btn primary small" onclick="importPicker.click()">Import IPA / ZIP</button><button class="btn small" onclick="newProject()">New web project</button><button class="btn small" onclick="saveFile()">Save</button><button class="btn small" onclick="exportArchive()">Export</button><button class="btn small" onclick="openTool('ai')">✧ Ask OmnaAi</button></div><input id="importPicker" type="file" accept=".ipa,.zip" class="hidden" onchange="importArchive(this.files[0])">
+<div class="toolbar"><button class="btn primary small" onclick="importPicker.click()">Import IPA / ZIP</button><button class="btn small" onclick="newProject()">New web project</button><button class="btn primary small" onclick="saveProjectFromUI()">Save Project</button><button class="btn small" onclick="toggleProjectLibrary()">My Projects</button><button class="btn small" onclick="saveFile()">Save File</button><button class="btn small" onclick="exportArchive()">Export ZIP/IPA</button><button class="btn small" onclick="openTool('ai')">✧ Ask OmnaAi</button></div>
+<div class="omna-project-bar"><label for="projectName">Project name</label><input id="projectName" class="input" maxlength="80" value="Untitled App" oninput="renameCurrentProjectName(this.value)" placeholder="Name this project">
+<span id="projectSaveStatus" class="muted">Projects are stored in this browser. Export ZIPs for backups.</span></div>
+<div id="projectLibrary" class="card hidden" style="margin:14px 0"><div class="flex" style="align-items:center"><h3 style="margin:0">Saved Projects</h3><button class="btn small" onclick="renderProjectLibrary()">Refresh</button></div><p class="muted">Open, rename, export, or delete projects saved in this browser. Private browsing and clearing browser storage can delete them. Export important projects to ZIP.</p><div id="projectLibraryItems"></div></div>
+<input id="importPicker" type="file" accept=".ipa,.zip" class="hidden" onchange="importArchive(this.files[0])">
 <div class="studio"><div class="card"><div class="flex"><strong>Project files</strong><span id="fileCount" class="pill">0</span></div><div class="file-list" id="fileList"></div></div>
 <div class="card"><label id="fileHeading">Source editor</label><textarea id="editor" class="code" spellcheck="false" placeholder="Open an IPA or create a web project…" oninput="markUnsaved()"></textarea><p class="muted">Only text resources are editable. Compiled Swift/Objective-C binaries cannot be converted into their original source code.</p></div>
 <div class="card previewpane"><div class="flex"><strong>Web preview</strong><div class="toolbar" style="margin:0;gap:5px"><button class="btn small" onclick="openTool('ai')">✧ Next change</button><button class="btn small" onclick="renderPreview()">Refresh</button></div></div><p class="muted">Browser rendering only — not an iOS simulator.</p><iframe id="preview" sandbox="allow-scripts" title="App preview"></iframe></div></div><p class="state" id="studioStatus">Choose an IPA or create a web project.</p>
@@ -57,6 +67,7 @@ main{max-width:1190px;margin:0 auto;padding:25px 24px 80px}.eyebrow{color:#a5bff
 </div><p class="muted"><a class="btn small" href="https://github.com/poopyscoopdy/Gojo/releases/download/omnasign-desktop-v5.2-preview/OmnaSignDesktop.exe">Get OmnaSign 5.1 for Windows location testing</a></p><p class="muted">Requires separately installed pymobiledevice3, Developer Mode, a trusted device connection, and compatible iOS services. Windows 5.2 keeps an active developer session until you press Clear; iOS 27 support is unverified.</p></section><section id="ai" class="tool-page hidden"><div class="eyebrow">Web App / OmnaAi</div><h2>Build or edit with OmnaAi</h2>
 <p class="muted">AI can create HTML/CSS/JavaScript projects or propose edits to editable IPA resources. Review and approve changes before they touch your project. Compiled binaries and signing certificates are never sent.</p>
 <div class="two"><div class="card">
+<div class="omna-ai-project"><strong id="aiActiveProjectName">Current project: Untitled App</strong><button class="btn small" onclick="openTool('studio');toggleProjectLibrary(true)">Saved projects</button></div>
 <label for="aiMode">Task</label><select class="input" id="aiMode" onchange="updateAiContinuityNote()"><option value="create">Create a new app with OmnaAi</option><option value="edit">Continue improving my current app</option></select>
 <p class="muted" id="aiContinuityNote">Your first request creates an app. Once applied, future prompts update that same project and preserve its features.</p><div style="height:13px"></div>
 <label for="aiModel">AI coding model</label>

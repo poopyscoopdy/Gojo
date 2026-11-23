@@ -41,3 +41,32 @@ jobs:
           assert body.get("codeGenerated") and files, "No usable code returned"
           assert any("content" in f and f["content"] for f in files)
           PY
+
+      - name: Test full Deep Coding edit of an existing app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          files={
+            "index.html":"<!doctype html><html><body><nav id='nav'>For You</nav><main id='feed'></main><script src='app.js'></script></body></html>",
+            "app.js":"const videos = [{id:'abc',title:'Demo Video'}]; function renderFeed(){document.getElementById('feed').textContent=videos.map(v=>v.title).join(' ');} renderFeed();"
+          }
+          payload=json.dumps({
+            "model":"auto","quality":"deep","projectType":"web","mode":"edit",
+            "prompt":"Keep the For You navigation, existing cards and player, and add a working automatic feed refresh every 30 seconds with no duplicates, plus a manual Refresh button. When there is no real API, label this as a demo, not live YouTube recommendations.",
+            "files":files,"projectGoal":"Create a YouTube-style multi-video For You feed","changeHistory":["Created feed and player"],"promptHistory":[]
+          }).encode()
+          req=urllib.request.Request("https://omnasign-studio.vercel.app/api/ai",data=payload,
+            headers={"Origin":"https://omnasign-studio.vercel.app","Content-Type":"application/json"},method="POST")
+          try:
+            with urllib.request.urlopen(req,timeout=90) as response:
+              result=json.load(response)
+              print("DEEP HTTP:",response.status)
+          except urllib.error.HTTPError as e:
+            print("DEEP HTTP ERROR:",e.code,e.read().decode()[:1800])
+            raise
+          updates=result.get("files",[])
+          print("DEEP MODEL:",result.get("model"),"CHANGES:",[x.get("path") for x in updates])
+          print("PATCHES APPLIED:",result.get("patchesApplied"),"REPAIR:",result.get("repairUsed"),"WARNINGS:",result.get("warnings"))
+          assert result.get("codeGenerated") and updates, "Deep Coding failed to return code"
+          PY

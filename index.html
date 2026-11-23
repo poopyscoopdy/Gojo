@@ -82,11 +82,11 @@ function openTool(tool){
  openPage('webapp');
 }
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>openPage(b.dataset.page));
-const initial=location.hash.replace(/^#/,'');if(initial.startsWith('webapp/'))openTool(initial.split('/')[1]);else if(initial==='downloads')openPage('downloads');else if(tools.includes(initial))openTool(initial);else openTool('studio');
 let archive=null,selected=null,sourceType='web',unsaved=false;
 let projectGoal='',changeHistory=[],pendingAiRequest='',pendingAiMode='',pendingAiSummary='';
 const OMNA_DRAFT_KEY='omnasign_studio_local_draft_v3';
 const E=id=>document.getElementById(id);
+const initial=location.hash.replace(/^#/,'');if(initial.startsWith('webapp/'))openTool(initial.split('/')[1]);else if(initial==='downloads')openPage('downloads');else if(tools.includes(initial))openTool(initial);else openTool('studio');
 
 // Preserve small HTML/CSS/JS workspaces across refreshes. IPA binaries and signing credentials
 // are never saved in localStorage.

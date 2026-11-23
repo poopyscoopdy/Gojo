@@ -31,6 +31,16 @@ function takeQuota(req) {
 module.exports = async function handler(req,res) {
   res.setHeader("Cache-Control", "no-store");
   if (req.method === "GET") {
+    if (req.query?.verify === "groq") {
+      if (!process.env.GROQ_API_KEY) return send(res,503,{provider:"Groq",authenticated:false});
+      try {
+        const response = await fetch("https://api.groq.com/openai/v1/models",{
+          headers:{"Authorization":"Bearer "+String(process.env.GROQ_API_KEY)},
+          signal:AbortSignal.timeout(12000)
+        });
+        return send(res,response.ok?200:503,{provider:"Groq",authenticated:response.ok,status:response.status});
+      } catch { return send(res,503,{provider:"Groq",authenticated:false,error:"Provider unavailable"}); }
+    }
     return send(res,200,{
       ok:true, provider:"Groq", configured:!!process.env.GROQ_API_KEY,
       models:["openai/gpt-oss-120b","openai/gpt-oss-20b"],

@@ -1,7 +1,51 @@
 // OmnaAi Coding v4: plan -> implement -> review, with project continuity and static checks.
 // Secrets stay in Vercel's encrypted GROQ_API_KEY environment setting.
 const vm=require("node:vm");
-const allowedModels=new Set(["openai/gpt-oss-120b","openai/gpt-oss-20b"]);
+// Catalog is allowlisted; visibility is filtered by this Groq account's live /models endpoint.
+// Some advanced models require additional account entitlement; never claim universal access.
+const MODEL_CATALOG={
+ "openai/gpt-oss-120b":{label:"GPT-OSS 120B · Advanced reasoning",schema:true,reasoning:"high"},
+ "qwen/qwen3.8-27b":{label:"Qwen 3.8 27B · Advanced coding",schema:true,reasoning:"high"},
+ "meta-models/muse-spark-open":{label:"Muse Spark Open · Expert (if available)",schema:true,reasoning:"xhigh"},
+ "minimaxai/minimax-m2.7":{label:"MiniMax M2.7 · Coding (if available)",schema:false},
+ "llama-3.3-70b-versatile":{label:"Llama 3.3 70B · Balanced (if available)",schema:false},
+ "openai/gpt-oss-20b":{label:"GPT-OSS 20B · Fast reasoning",schema:true,reasoning:"medium"}
+};
+const MODEL_ORDER=Object.keys(MODEL_CATALOG);
+const allowedModels=new Set(MODEL_ORDER);
+let modelCache={expiresAt:0,ids:null};
+async function availableGroqModels(key){
+ const now=Date.now();
+ if(modelCache.ids && now<modelCache.expiresAt)return modelCache.ids;
+ try{
+  const response=await fetch("https://api.groq.com/openai/v1/models",{
+   headers:{"Authorization":"Bearer "+key},signal:AbortSignal.timeout(7500)
+  });
+  if(!response.ok)throw Error("Model list unavailable");
+  const data=await response.json();
+  const ids=new Set((Array.isArray(data.data)?data.data:[])
+   .filter(m=>m&&typeof m.id==="string"&&(!m.active || m.active===true))
+   .map(m=>m.id));
+  modelCache={ids,expiresAt:now+5*60000};
+  return ids;
+ }catch{
+  // Keep stable production models selectable when discovery has a temporary outage.
+  return new Set(["openai/gpt-oss-120b","openai/gpt-oss-20b"]);
+ }
+}
+function availableOptions(ids){
+ return MODEL_ORDER.filter(id=>ids.has(id)).map(id=>({
+  id,label:MODEL_CATALOG[id].label,strictSchema:MODEL_CATALOG[id].schema,
+  tier:id.includes("120b")||id.includes("qwen")?"advanced":id.includes("20b")?"fast":"special"
+ }));
+}
+function fallbackOrder(selected,ids){
+ const usable=MODEL_ORDER.filter(x=>ids.has(x));
+ const base=usable.length?usable:["openai/gpt-oss-120b","openai/gpt-oss-20b"];
+ const primary=(selected!=="auto"&&allowedModels.has(selected)&&base.includes(selected))?selected:
+  base.includes("openai/gpt-oss-120b")?"openai/gpt-oss-120b":base[0];
+ return [primary,...base.filter(x=>x!==primary)];
+}
 const ORIGIN="https://omnasign-studio.vercel.app";
 const rate=globalThis.__omnaRateV4||(globalThis.__omnaRateV4=new Map());
 

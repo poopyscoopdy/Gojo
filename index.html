@@ -24,7 +24,7 @@ main{max-width:1190px;margin:0 auto;padding:25px 24px 80px}.eyebrow{color:#a5bff
 <main>
 <section id="webapp">
 <div class="eyebrow">OMNASIGN WEB APP · FREE MANUAL TOOLS</div><div class="flex" style="margin:8px 0 4px"><h2 style="margin:0">Make and manage iOS apps</h2><span class="pill">Browser workspace</span></div>
-<p class="sub" style="font-size:14px;margin:8px 0 24px">Build an app, edit imported IPA resources, prepare signing, or select a map test point. OmnaAi can propose edits with a model you connect.</p>
+<p class="sub" style="font-size:14px;margin:8px 0 24px">Build and save multiple apps, edit imported IPA resources, prepare signing, and use OmnaAi to generate or review code. Projects are saved locally in this browser.</p>
 <div class="toolbar toolnav">
 <button class="btn primary small tool-tab" data-tool="studio" onclick="openTool('studio')">✎ Create / Edit</button>
 <button class="btn small tool-tab" data-tool="install" onclick="openTool('install')">✦ Sign / Install</button>
@@ -204,7 +204,12 @@ async function openSavedProject(id,{skipPresave=false}={}){
  try{
   const record=await getSavedProject(id);
   if(!record||!record.archiveBlob)throw Error('Saved project was not found.');
-  if(!skipPresave&&archive&&projectId!==id){
+  if(!skipPresave&&archive&&projectId===id){
+  await saveProjectSnapshot({quiet:true});
+  status('This project is already open. Its latest changes are saved.');
+  return true;
+ }
+ if(!skipPresave&&archive&&projectId!==id){
    if(projectSaveTimer){clearTimeout(projectSaveTimer);projectSaveTimer=null;}
    if(unsaved)archive.file(selected,E('editor').value);
    await saveProjectSnapshot({quiet:true});
@@ -531,10 +536,10 @@ async function collectAiFiles(){
  if(unsaved)await saveFile();
  const result={};let total=0,count=0;
  if(archive)for(const [path,entry] of Object.entries(archive.files)){
-  if(count>=12)break;
+  if(count>=16)break;
   if(entry.dir||!textFile(path)||path.includes('..')||path.startsWith('/')||path.includes('\\'))continue;
   const contents=await entry.async('string');
-  if(contents.length>16000||total+contents.length>35000)continue;
+  if(contents.length>24000||total+contents.length>65000)continue;
   result[path]=contents;total+=contents.length;count++;
  }
  return result;
@@ -548,7 +553,9 @@ function renderQualityChecks(result){
 if(result.model){
  const model=document.createElement('p');
  model.textContent='Model used: '+result.model+(result.autoFallback?' · Backup activated':'')+
-  (result.requestedModel==='auto'?' · Auto selection':'');
+  (result.requestedModel==='auto'?' · Auto selection':'')+
+  (result.patchesApplied?' · '+result.patchesApplied+' targeted edits':'')+
+  (result.repairUsed?' · Focused coding repair':'');
  panel.appendChild(model);
 }
  const sections=[

@@ -77,6 +77,13 @@ main{max-width:1190px;margin:0 auto;padding:25px 24px 80px}.eyebrow{color:#a5bff
 <option value="openai/gpt-oss-20b">GPT-OSS 20B · Fast reasoning</option>
 </select>
 <p id="aiModelStatus" class="muted">Checking the advanced models available to this Groq account…</p><div style="height:13px"></div>
+<label for="aiProjectType">Project type</label>
+<select id="aiProjectType" class="input">
+<option value="web">Previewable web app · HTML/CSS/JS</option>
+<option value="fullstack">Full-stack project · Frontend + backend scaffold</option>
+</select>
+<p class="muted">Full-stack mode can create Node.js server, API, database schema and deployment files in your ZIP; backend services cannot run inside the browser preview. They require hosting.</p>
+<div style="height:12px"></div>
 <label for="aiQuality">Coding quality</label><select id="aiQuality" class="input"><option value="deep">Deep Coding · Plan, build &amp; review</option><option value="fast">Fast Coding · Single generation</option></select>
 <p class="muted">Deep Coding checks requirements, generates code and reviews the result. Auto chooses an available model and retries with backups when one fails. Groq account limits still apply.</p><div style="height:13px"></div>
 <p class="notice" id="groqConnection">OmnaAi uses Groq through a server-side connection. No API key needed here.</p>
@@ -451,7 +458,7 @@ window.addEventListener('load',()=>{loadPromptHistory();restoreLocalDraft().then
 
 function status(v){E('studioStatus').textContent=v}
 function markUnsaved(){unsaved=true;E('fileHeading').textContent=(selected||'Source editor')+' • Unsaved';scheduleProjectAutosave();}
-function textFile(path){return /\.(html?|css|js|mjs|json|xml|txt|md|svg|plist|strings|yml|yaml)$/i.test(path)}
+function textFile(path){return /\.(html?|css|js|mjs|jsx|ts|tsx|json|xml|txt|md|svg|plist|strings|sql|yml|yaml|swift|py)$/i.test(path)}
 async function refreshFiles(){if(!archive)return;const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x)).slice(0,500);E('fileCount').textContent=String(names.length);E('fileList').innerHTML='';names.forEach(name=>{let b=document.createElement('button');b.className='file'+(name===selected?' active':'');b.textContent=name;b.onclick=()=>selectFile(name);E('fileList').appendChild(b)});if(!names.length)status('No editable text resources were found in this archive.')}
 async function selectFile(name){if(unsaved)await saveFile();selected=name;try{E('editor').value=await archive.file(name).async('string');E('fileHeading').textContent=name;unsaved=false;await refreshFiles();if(/\.html?$/i.test(name))renderPreview()}catch(e){status('Cannot open this file: '+e.message)}}
 async function newProject(){if(typeof JSZip==='undefined'){status('ZIP library did not load. Check internet access.');return}
@@ -569,7 +576,7 @@ if(result.model){
 }
 async function askOmnaAi(){
  const prompt=E('aiPrompt').value.trim(),requestedMode=E('aiMode').value,
-  model=E('aiModel').value,quality=E('aiQuality').value;
+  model=E('aiModel').value,quality=E('aiQuality').value,projectType=E('aiProjectType').value;
  const mode=(!archive&&requestedMode==='edit')?'create':requestedMode;
  if(!prompt){E('aiStatus').textContent='Describe the app or the next change first.';return;}
  if(typeof JSZip==='undefined'){E('aiStatus').textContent='Could not load ZIP editing library.';return;}
@@ -588,7 +595,7 @@ async function askOmnaAi(){
    .map(e=>e.prompt.slice(0,230)+' | '+String(e.summary||'').slice(0,130));
   const response=await fetch('/api/ai',{
    method:'POST',headers:{'content-type':'application/json'},
-   body:JSON.stringify({model,mode,quality,prompt,files,projectGoal,changeHistory:changeHistory.slice(-12),promptHistory:previous})
+   body:JSON.stringify({model,mode,quality,projectType,prompt,files,projectGoal,changeHistory:changeHistory.slice(-12),promptHistory:previous})
   });
   const result=await response.json();
   if(!response.ok)throw Error(result.error||'AI request failed');

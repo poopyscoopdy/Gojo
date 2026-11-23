@@ -286,26 +286,64 @@ async function collectAiFiles(){
  }
  return result;
 }
+
+function renderQualityChecks(result){
+ const box=E('aiCodeChecks');if(!box)return;
+ box.replaceChildren();box.classList.remove('hidden');
+ const panel=document.createElement('div');panel.className='omna-checks';
+ const title=document.createElement('h4');title.textContent=result.quality==='deep'?'Deep Coding · requirements & review':'Fast Coding · source checks';panel.appendChild(title);
+ const sections=[
+  ['What the app must do',result.requirements||[]],
+  ['Checks',result.tests||[]],
+  ['Potential problems',result.warnings||[]],
+  ['External API limitations',result.limitations||[]]
+ ];
+ for(const [label,items] of sections){
+  if(!Array.isArray(items)||!items.length)continue;
+  const heading=document.createElement('h4');heading.textContent=label;panel.appendChild(heading);
+  const list=document.createElement('ul');
+  for(const item of items.slice(0,14)){
+   const li=document.createElement('li');li.textContent=String(item);
+   if(label==='Potential problems')li.className='omna-warning';
+   list.appendChild(li);
+  }
+  panel.appendChild(list);
+ }
+ if(result.quality==='deep'&&!result.reviewed){
+  const p=document.createElement('p');p.className='muted';p.textContent='The independent AI review did not finish; inspect the suggested changes carefully.';
+  panel.appendChild(p);
+ }
+ box.appendChild(panel);
+}
 async function askOmnaAi(){
- const prompt=E('aiPrompt').value.trim(),requestedMode=E('aiMode').value,model=E('aiModel').value;
- const mode=(!archive && requestedMode==='edit')?'create':requestedMode;
+ const prompt=E('aiPrompt').value.trim(),requestedMode=E('aiMode').value,
+  model=E('aiModel').value,quality=E('aiQuality').value;
+ const mode=(!archive&&requestedMode==='edit')?'create':requestedMode;
  if(!prompt){E('aiStatus').textContent='Describe the app or the next change first.';return;}
- if(typeof JSZip==='undefined'){E('aiStatus').textContent='Could not load the ZIP editing library.';return;}
+ if(typeof JSZip==='undefined'){E('aiStatus').textContent='Could not load ZIP editing library.';return;}
+ if(pendingHistoryId)updatePromptEntry(pendingHistoryId,{status:'superseded'});
  E('aiGo').disabled=true;
- E('aiStatus').textContent=mode==='edit'?'OmnaAi is reading and improving your existing app…':'OmnaAi is building your new app…';
- E('aiReview').replaceChildren();E('aiApply').classList.add('hidden');aiProposal=[];pendingAiRequest='';pendingAiMode='';
+ E('aiStatus').textContent=quality==='deep'?
+  'Deep Coding: analyzing requirements, building the app, and reviewing the code…':
+  'Fast Coding: generating your requested app changes…';
+ E('aiReview').replaceChildren();E('aiCodeChecks').replaceChildren();E('aiCodeChecks').classList.add('hidden');
+ E('aiApply').classList.add('hidden');aiProposal=[];
+ pendingAiRequest='';pendingAiMode='';pendingAiSummary='';
+ const historyId=createPromptEntry({prompt,mode,quality});
  try{
   const files=await collectAiFiles();
+  const previous=promptHistory.filter(e=>e.status==='applied'&&e.projectId===projectId).slice(-12)
+   .map(e=>e.prompt.slice(0,230)+' | '+String(e.summary||'').slice(0,130));
   const response=await fetch('/api/ai',{
    method:'POST',headers:{'content-type':'application/json'},
-   body:JSON.stringify({model,mode,prompt,files,projectGoal,changeHistory:changeHistory.slice(-6)})
+   body:JSON.stringify({model,mode,quality,prompt,files,projectGoal,changeHistory:changeHistory.slice(-12),promptHistory:previous})
   });
   const result=await response.json();
   if(!response.ok)throw Error(result.error||'AI request failed');
   aiProposal=Array.isArray(result.files)?result.files:[];
-  pendingAiRequest=prompt;pendingAiMode=mode;pendingAiSummary=result.summary||'';
+  pendingAiRequest=prompt;pendingAiMode=mode;pendingAiSummary=result.summary||'';pendingHistoryId=historyId;
   const review=E('aiReview'),summary=document.createElement('p');
-  summary.textContent=result.summary||'OmnaAi prepared changes to your app.';
+  summary.textContent=result.summary||'OmnaAi prepared code changes.';
   review.appendChild(summary);
   for(const file of aiProposal){
    const details=document.createElement('details');details.className='ai-file';
@@ -314,52 +352,61 @@ async function askOmnaAi(){
    const pre=document.createElement('pre');pre.textContent=file.content;
    details.appendChild(pre);review.appendChild(details);
   }
-  E('aiApply').classList.toggle('hidden',aiProposal.length===0);
-  E('aiStatus').textContent=aiProposal.length
-   ? aiProposal.length+' proposed file(s). Review, then select Apply changes & preview to continue your app.'
-   : 'OmnaAi did not propose file changes. Try specifying which part of the existing app to improve.';
- }catch(err){E('aiStatus').textContent=err.message||'OmnaAi failed.';}
- finally{E('aiGo').disabled=false;}
+  renderQualityChecks(result);
+  const warnings=Array.isArray(result.warnings)?result.warnings:[];
+  const fatal=warnings.some(w=>/JavaScript syntax error|invalid JSON|No index.html was generated|missing file/i.test(String(w)));
+  E('aiApply').classList.toggle('hidden',aiProposal.length===0||fatal);
+  updatePromptEntry(historyId,{status:fatal?'needs-fix':aiProposal.length?'proposed':'empty',
+   summary:String(result.summary||'').slice(0,500),quality});
+  E('aiStatus').textContent=fatal?
+   'Code review found a blocking issue. Do not apply these files; request a smaller fix or regenerate.':
+   aiProposal.length?
+   aiProposal.length+' proposed file(s). Review the requirements and source; then Apply changes & preview.':
+   'No source changes were generated. Try describing the behavior more specifically.';
+ }catch(err){
+  updatePromptEntry(historyId,{status:'failed',summary:String(err.message||'AI failed').slice(0,350)});
+  E('aiStatus').textContent=err.message||'OmnaAi failed.';
+ }finally{E('aiGo').disabled=false;}
 }
 async function applyAiProposal(){
  if(!aiProposal.length){E('aiStatus').textContent='No AI changes are ready to apply.';return;}
  if(typeof JSZip==='undefined'){E('aiStatus').textContent='ZIP library unavailable.';return;}
  const valid=aiProposal.filter(f=>f&&typeof f.path==='string'&&typeof f.content==='string'&&
   !f.path.includes('..')&&!f.path.includes('\\')&&!f.path.startsWith('/')&&textFile(f.path));
- if(!valid.length){E('aiStatus').textContent='The proposed files were invalid. Your project was not changed.';return;}
- const willReplace=pendingAiMode==='create'&&archive&&!!projectGoal;
- if(willReplace&&!window.confirm('Create a different app? This will replace the current workspace. Export the old project first if you want to keep it. Choose Cancel to return to editing your existing app.'))return;
+ if(!valid.length){E('aiStatus').textContent='Proposed files were invalid. Your project was not changed.';return;}
+ const replacing=pendingAiMode==='create'&&archive&&!!projectGoal;
+ if(replacing&&!window.confirm('Start a different app? Export your current project first to keep it. Choose Cancel to continue the existing app.'))return;
  if(pendingAiMode==='create'||!archive)await newProject();
  if(!archive){E('aiStatus').textContent='Could not create the local workspace.';return;}
  if(unsaved)await saveFile();
  let updated=0,first=null;
  for(const file of valid){
-  // Never claim to recompile native binaries. Only replace editable assets that already exist inside IPAs.
   if(sourceType==='ipa'&&!archive.file(file.path))continue;
   archive.file(file.path,file.content);updated++;if(!first)first=file.path;
  }
- if(!updated){E('aiStatus').textContent='No compatible editable files could be changed in this IPA. The original files remain intact.';return;}
+ if(!updated){E('aiStatus').textContent='The IPA did not have compatible text resources to replace. Original files remain intact.';return;}
  if(pendingAiMode==='create'||!projectGoal)projectGoal=pendingAiRequest.slice(0,650);
- changeHistory.push('User change: '+pendingAiRequest.slice(0,240)+' | Applied: '+pendingAiSummary.slice(0,125));
- changeHistory=changeHistory.slice(-6);
+ changeHistory.push('User change: '+pendingAiRequest.slice(0,260)+' | Applied: '+pendingAiSummary.slice(0,145));
+ changeHistory=changeHistory.slice(-12);
+ if(pendingHistoryId)updatePromptEntry(pendingHistoryId,{projectId,status:'applied',
+  summary:pendingAiSummary.slice(0,500),fileNames:valid.map(x=>x.path)});
  const appliedCount=updated;
  await refreshFiles();
- const home=Object.keys(archive.files).find(n=>!archive.files[n].dir&&/(^|\/)index\.html$/i.test(n));
- if(home)await selectFile(home);
+ const index=Object.keys(archive.files).find(n=>!archive.files[n].dir&&/(^|\/)index\.html$/i.test(n));
+ if(index)await selectFile(index);
  else if(first)await selectFile(first);
  await saveLocalDraft();
- // Reset the prompt and automatically switch to follow-up/edit mode.
  E('aiPrompt').value='';
- E('aiPrompt').placeholder='What should OmnaAi improve NEXT in this same app? e.g. Add thumbnails and titles to the existing video feed…';
+ E('aiPrompt').placeholder='Describe the next improvement to THIS app. OmnaAi will remember the earlier requirements.';
  E('aiMode').value='edit';
- E('aiReview').replaceChildren();
+ E('aiReview').replaceChildren();E('aiCodeChecks').replaceChildren();E('aiCodeChecks').classList.add('hidden');
  E('aiApply').classList.add('hidden');
- aiProposal=[];pendingAiRequest='';pendingAiMode='';pendingAiSummary='';
+ aiProposal=[];pendingAiRequest='';pendingAiMode='';pendingAiSummary='';pendingHistoryId='';
  updateAiContinuityNote();
- E('aiStatus').textContent='Changes applied. The prompt is cleared; return here to request the next improvement.';
+ E('aiStatus').textContent='Changes applied and prompt cleared. Your request is saved in Prompt history.';
  openTool('studio');
  await renderPreview();
- status('Applied '+appliedCount+' AI file change(s). Preview updated. Your next OmnaAi prompt will KEEP improving this app. Local draft saved.');
+ status('Updated '+appliedCount+' project file(s); preview refreshed. Your prompt history is saved. Use Next change to continue coding.');
 }
 async function copyAiPrompt(){
  const query=E('aiPrompt').value.trim();

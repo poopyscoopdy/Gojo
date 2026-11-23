@@ -1,0 +1,47 @@
+name: OmnaAi v7 live coding smoke
+on:
+  push:
+    branches: [omnasign-intelligent-multiprovider-v7]
+    paths: ['.github/workflows/omnaai-v7-live-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-generation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify Groq fast coding and deep edit paths
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          url="https://omnasign-studio.vercel.app/api/ai"
+          cases=[
+            {"quality":"fast","mode":"create","model":"openai/gpt-oss-20b",
+             "prompt":"Create a functioning web page with a counter, a button, and JavaScript click handler. Return the actual source files.",
+             "files":{},"projectGoal":"","projectType":"web"},
+            {"quality":"deep","mode":"edit","model":"auto",
+             "prompt":"Preserve the original navigation and feed. Add a working manual Refresh button with an event handler that updates the existing feed count.",
+             "files":{"index.html":"<!doctype html><html><body><nav>Home</nav><main id='feed'></main><script src='app.js'></script></body></html>",
+                      "app.js":"let count=0;function showFeed(){document.getElementById('feed').textContent=String(count);}showFeed();"},
+             "projectGoal":"Build a working video feed","projectType":"web"}
+          ]
+          for i,payload in enumerate(cases):
+            req=urllib.request.Request(url,data=json.dumps(payload).encode(),method="POST",
+                 headers={"Origin":"https://omnasign-studio.vercel.app","Content-Type":"application/json"})
+            try:
+              with urllib.request.urlopen(req,timeout=85) as response:
+                result=json.load(response)
+                print("CASE",i,"HTTP",response.status,flush=True)
+            except urllib.error.HTTPError as err:
+              print("CASE",i,"HTTP ERROR",err.code,err.read().decode()[:1300],flush=True)
+              raise
+            changes=result.get("files") or []
+            print("CASE",i,"MODEL",result.get("model"),"FILES",[f.get("path") for f in changes],
+                  "CODE",result.get("codeGenerated"),"REVIEWED",result.get("reviewed"),
+                  "REPAIRED",result.get("repairUsed"),flush=True)
+            assert result.get("codeGenerated"),"AI did not produce code"
+            assert changes and any(f.get("content") for f in changes),"No source files returned"
+            assert not any(x.get("path","").startswith("./") for x in changes),"Unnormalized file path"
+          PY

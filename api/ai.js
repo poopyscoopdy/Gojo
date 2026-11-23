@@ -55,6 +55,9 @@ function reply(res,code,body){
  res.setHeader("X-Content-Type-Options","nosniff");
  return res.status(code).json(body);
 }
+function canonicalPath(p){
+ return String(p||"").replace(/^(?:\.\/)+/,"").replace(/\/{2,}/g,"/");
+}
 function safePath(p){
  return typeof p==="string"&&p.length>0&&p.length<=180&&!p.startsWith("/")&&!p.includes("..")&&!p.includes("\\")&&
   /\.(html?|css|js|jsx|mjs|ts|tsx|json|xml|txt|md|svg|sql|yml|yaml|swift|py)$/i.test(p);
@@ -100,7 +103,7 @@ function extractFiles(x){
  for(const [path,content] of Object.entries(incoming)){
   if(count>=16)break;
   if(!safePath(path)||typeof content!=="string"||content.length>25000||total+content.length>69000)continue;
-  files[path]=content;count++;total+=content.length;
+  files[canonicalPath(path)]=content;count++;total+=content.length;
  }
  return files;
 }
@@ -111,14 +114,15 @@ function assembleChanges(output,current){
  const files=Array.isArray(output?.files)?output.files:[];
  for(const f of files.slice(0,12)){
   if(f&&safePath(f.path)&&typeof f.content==="string"&&f.content.length<=90000)
-   map.set(f.path,f.content);
+   map.set(canonicalPath(f.path),f.content);
  }
  const patches=Array.isArray(output?.patches)?output.patches:[];
  let applied=0;
  for(const edit of patches.slice(0,18)){
   if(!edit||!safePath(edit.path)||typeof edit.find!=="string"||typeof edit.replace!=="string"||
    !edit.find||edit.find.length>18000||edit.replace.length>40000){warnings.push("Ignored an invalid patch.");continue;}
-  const previous=map.has(edit.path)?map.get(edit.path):current[edit.path];
+  const path=canonicalPath(edit.path);
+  const previous=map.has(path)?map.get(path):current[path];
   if(typeof previous!=="string"){warnings.push("Patch skipped: source file "+edit.path+" not found.");continue;}
   const first=previous.indexOf(edit.find);
   if(first<0||previous.indexOf(edit.find,first+edit.find.length)!==-1){
@@ -126,7 +130,7 @@ function assembleChanges(output,current){
   }
   const next=previous.slice(0,first)+edit.replace+previous.slice(first+edit.find.length);
   if(next.length>140000){warnings.push("Patch skipped: "+edit.path+" would exceed size limit.");continue;}
-  map.set(edit.path,next);applied++;
+  map.set(path,next);applied++;
  }
  if(applied)checks.push("Applied "+applied+" targeted edit(s) to existing source files.");
  return{files:[...map].map(([path,content])=>({path,content})),warnings,checks,patchCount:applied};

@@ -212,7 +212,8 @@ async function openSavedProject(id,{skipPresave=false}={}){
  if(!skipPresave&&archive&&projectId!==id){
    if(projectSaveTimer){clearTimeout(projectSaveTimer);projectSaveTimer=null;}
    if(unsaved)archive.file(selected,E('editor').value);
-   await saveProjectSnapshot({quiet:true});
+   const saved=await saveProjectSnapshot({quiet:true});
+   if(!saved){status('The current project could not be saved. Export its ZIP before switching.');return false;}
   }
   const nextArchive=await JSZip.loadAsync(record.archiveBlob);
   archive=nextArchive;projectId=record.id;
@@ -466,11 +467,13 @@ function markUnsaved(){unsaved=true;E('fileHeading').textContent=(selected||'Sou
 function textFile(path){return /\.(html?|css|js|mjs|jsx|ts|tsx|json|xml|txt|md|svg|plist|strings|sql|yml|yaml|swift|py)$/i.test(path)}
 async function refreshFiles(){if(!archive)return;const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x)).slice(0,500);E('fileCount').textContent=String(names.length);E('fileList').innerHTML='';names.forEach(name=>{let b=document.createElement('button');b.className='file'+(name===selected?' active':'');b.textContent=name;b.onclick=()=>selectFile(name);E('fileList').appendChild(b)});if(!names.length)status('No editable text resources were found in this archive.')}
 async function selectFile(name){if(unsaved)await saveFile();selected=name;try{E('editor').value=await archive.file(name).async('string');E('fileHeading').textContent=name;unsaved=false;await refreshFiles();if(/\.html?$/i.test(name))renderPreview()}catch(e){status('Cannot open this file: '+e.message)}}
-async function newProject(){if(typeof JSZip==='undefined'){status('ZIP library did not load. Check internet access.');return}
-if(archive){if(projectSaveTimer){clearTimeout(projectSaveTimer);projectSaveTimer=null;}await saveProjectSnapshot({quiet:true});}
-activeProjectName='Untitled App';syncProjectName();projectGoal='';changeHistory=[];projectId='project-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7);archive=new JSZip();archive.file('index.html','<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Omna App</title><style>body{font-family:system-ui;text-align:center;padding:60px;background:#121c3f;color:white}h1{font-size:36px}</style></head><body><h1>My Omna App</h1><p>Edit this HTML and refresh preview!</p></body></html>');sourceType='web';selected=null;await refreshFiles();await selectFile('index.html');E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();scheduleProjectAutosave();status('New web project. Export will be a web-project ZIP, not an installable IPA.')}
+async function newProject(){if(typeof JSZip==='undefined'){status('ZIP library did not load. Check internet access.');return false}
+if(archive){if(projectSaveTimer){clearTimeout(projectSaveTimer);projectSaveTimer=null;}const saved=await saveProjectSnapshot({quiet:true});
+ if(!saved){status('Could not save your current project. Export the ZIP before creating another app.');return false;}}
+activeProjectName='Untitled App';syncProjectName();projectGoal='';changeHistory=[];projectId='project-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7);archive=new JSZip();archive.file('index.html','<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Omna App</title><style>body{font-family:system-ui;text-align:center;padding:60px;background:#121c3f;color:white}h1{font-size:36px}</style></head><body><h1>My Omna App</h1><p>Edit this HTML and refresh preview!</p></body></html>');sourceType='web';selected=null;await refreshFiles();await selectFile('index.html');E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();scheduleProjectAutosave();status('New web project. Export will be a web-project ZIP, not an installable IPA.');return true;}
 async function importArchive(file){if(!file)return;if(typeof JSZip==='undefined'){status('ZIP library unavailable.');return}try{
- if(archive){if(projectSaveTimer){clearTimeout(projectSaveTimer);projectSaveTimer=null;}await saveProjectSnapshot({quiet:true});}
+ if(archive){if(projectSaveTimer){clearTimeout(projectSaveTimer);projectSaveTimer=null;}const saved=await saveProjectSnapshot({quiet:true});
+ if(!saved){status('Could not save current project. Export it as a ZIP before importing another.');return;}}
  archive=await JSZip.loadAsync(file);activeProjectName=normalizeProjectName(file.name.replace(/\.(ipa|zip)$/i,''));syncProjectName();
  sourceType=/\.ipa$/i.test(file.name)?'ipa':'zip';selected=null;unsaved=false;projectGoal='Imported project: '+file.name;projectId='import-'+Date.now().toString(36);changeHistory=[];await refreshFiles();const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x));if(names.length)await selectFile(names.find(x=>/index\.html$/i.test(x))||names[0]);E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();status('Imported '+file.name+'. Edit supported files, then export and re-sign any modified IPA.')}catch(e){status('Could not open archive: '+e.message)}}
 async function saveFile(){if(!archive||!selected)return;archive.file(selected,E('editor').value);unsaved=false;E('fileHeading').textContent=selected;await saveLocalDraft();scheduleProjectAutosave();status('Saved '+selected+' into local archive.')}
@@ -642,7 +645,10 @@ async function applyAiProposal(){
  if(!valid.length){E('aiStatus').textContent='Proposed files were invalid. Your project was not changed.';return;}
  const replacing=pendingAiMode==='create'&&archive&&!!projectGoal;
  if(replacing&&!window.confirm('Start a different app? Export your current project first to keep it. Choose Cancel to continue the existing app.'))return;
- if(pendingAiMode==='create'||!archive)await newProject();
+ if(pendingAiMode==='create'||!archive){
+  const created=await newProject();
+  if(!created){E('aiStatus').textContent='Could not safely create a new project. Export the existing ZIP and free up browser storage.';return;}
+ }
  if(!archive){E('aiStatus').textContent='Could not create the local workspace.';return;}
  if(unsaved)await saveFile();
  let updated=0,first=null;

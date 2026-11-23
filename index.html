@@ -647,8 +647,11 @@ async function applyAiProposal(){
  if(unsaved)await saveFile();
  let updated=0,first=null;
  for(const file of valid){
-  if(sourceType==='ipa'&&!archive.file(file.path))continue;
-  archive.file(file.path,file.content);updated++;if(!first)first=file.path;
+  const normalized=file.path.replace(/^(?:\.\/)+/,'').replace(/\/{2,}/g,'/');
+  const existing=Object.keys(archive.files).find(n=>n.replace(/^(?:\.\/)+/,'').replace(/\/{2,}/g,'/')===normalized);
+  if(sourceType==='ipa'&&!existing)continue;
+  const target=existing||normalized;
+  archive.file(target,file.content);updated++;if(!first)first=target;
  }
  if(!updated){E('aiStatus').textContent='The IPA did not have compatible text resources to replace. Original files remain intact.';return;}
  if(pendingAiMode==='create'||!projectGoal){

@@ -15,7 +15,10 @@ internal static class Program
     private static void Main()
     {
         ApplicationConfiguration.Initialize();
-        Application.Run(new StudioWindow());
+        try { OmnaSignUrlProtocol.RegisterCurrentUser(); }
+        catch { /* Optional integration. The desktop UI still works without it. */ }
+        bool apple = OmnaSignUrlProtocol.IsAppleAccountLaunch(Environment.GetCommandLineArgs());
+        Application.Run(new StudioWindow(apple));
     }
 }
 
@@ -30,7 +33,7 @@ public sealed class StudioWindow : Form
     private static readonly string Sideloadly = "https://sideloadly.io/";
     private readonly Panel surface = new() { Dock = DockStyle.Fill, BackColor = Bg, AutoScroll = true };
     private readonly Panel sidebar = new() { Dock = DockStyle.Left, Width = 210, BackColor = Color.FromArgb(12, 22, 40) };
-    private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 26, Text = "OmnaSign Desktop 6.0 · No subscription · Local signing", ForeColor = Muted, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0) };
+    private readonly Label status = new() { Dock = DockStyle.Bottom, Height = 26, Text = "OmnaSign Desktop 6.1 · No subscription · Local signing", ForeColor = Muted, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0) };
     private readonly Label header = new() { Dock = DockStyle.Top, Height = 76, Text = "  OmnaSign Desktop     ·     Sign apps, build apps, and test locations", Font = new Font("Segoe UI", 15, FontStyle.Bold), ForeColor = Color.White, BackColor = PanelBg, TextAlign = ContentAlignment.MiddleLeft };
     private readonly TextBox ipa = new(), p12 = new(), profile = new(), zsign = new(), pass = new(), bundle = new();
     private readonly TextBox log = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Height = 115 };
@@ -40,9 +43,9 @@ public sealed class StudioWindow : Form
     private Process? activeLocationSession;
     private bool locationBusy;
 
-    public StudioWindow()
+    public StudioWindow(bool openAppleAccount = false)
     {
-        Text = "OmnaSign Desktop 5.2";
+        Text = "OmnaSign Desktop 6.1";
         Size = new Size(1100, 790);
         MinimumSize = new Size(850, 610);
         StartPosition = FormStartPosition.CenterScreen;
@@ -61,7 +64,8 @@ public sealed class StudioWindow : Form
         AddNav("↓   Downloads", ShowDownloads);
         AddNav("⚙   About / setup", ShowAbout);
         FormClosed += (_, _) => StopLocationSession();
-        ShowHome();
+        if (openAppleAccount) ShowAppleAccount();
+        else ShowHome();
     }
 
     private static Label Label(string text, int size = 11, bool bold = false)
@@ -399,7 +403,7 @@ public sealed class StudioWindow : Form
     }
     private void ShowAbout()
     {
-        var p = Page("Setup & privacy", "OmnaSign Desktop 5.2 — native Windows UI with embedded Microsoft WebView2.");
+        var p = Page("Setup & privacy", "OmnaSign Desktop 6.1 — native Windows UI with embedded Microsoft WebView2.");
         p.Controls.Add(Label("Signing uses your local certificate and profile. Apple credentials are never collected here."));
         p.Controls.Add(Label("Apple Account sign-in, two-factor verification, provisioning and installation use the MIT-licensed iPASide engine bundled with the full Windows package. A free Apple account typically has seven-day expiration."));
         p.Controls.Add(Label("OmnaAi API keys should never be embedded in the public installer. A hosted backend with server-held credentials, authentication, and usage limits is needed for bundled AI access."));

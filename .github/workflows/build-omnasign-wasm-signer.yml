@@ -1,0 +1,72 @@
+name: Build OmnaSign local browser signer
+on:
+  push:
+    branches: [omnasign-browser-wasm]
+    paths: ['.github/workflows/build-omnasign-wasm-signer.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: omnasign-wasm-signer
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Clone pinned upstream WebAssembly signer
+        run: |
+          git clone --quiet https://github.com/AntonP29/SylvaSigner.git upstream-signer
+          git -C upstream-signer checkout f7127d6857a6aaa919b7430ef73baa262fe28070
+          test "$(git -C upstream-signer rev-parse HEAD)" = f7127d6857a6aaa919b7430ef73baa262fe28070
+      - name: Brand local signer with original attribution
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('upstream-signer')
+          idx=root/'index.html'
+          s=idx.read_text(encoding='utf8')
+          s=s.replace('Sylva Signer - Sign iOS IPA Files in Your Browser','OmnaSign Browser Signer - Local iOS IPA Signing')
+          s=s.replace('Sylva Signer','OmnaSign Browser Signer')
+          # Retain upstream service hostnames for advanced optional flows;
+          # the local signing core has no requirement to contact those services.
+          idx.write_text(s,encoding='utf8')
+          src=root/'src/components/sylva-signer.tsx'
+          s=src.read_text(encoding='utf8').replace('Sylva Signer','OmnaSign Browser Signer')
+          src.write_text(s,encoding='utf8')
+          notice=root/'public/OMNASIGN-CREDITS.txt'
+          notice.write_text('OmnaSign Browser Signer uses code from Sylva Signer (MIT License) by AntonP29. Original source: https://github.com/AntonP29/SylvaSigner\nThis build signs IPA files locally using a WASM port of zsign.\nThe optional remote installation features from the upstream project may not work under OmnaSign domain because the upstream Worker restricts origins.\n')
+          (root/'public/LICENSE-SYLVA.txt').write_text((root/'LICENSE').read_text())
+          PY
+      - name: Install dependencies and build WASM signing SPA
+        working-directory: upstream-signer
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html
+          test -s dist/wasm/zsign.wasm
+          test -s dist/wasm/zsign-mobile.wasm
+          ls -lah dist/wasm/zsign*.wasm
+      - name: Export compiled static browser signer
+        run: |
+          rm -rf signer-public
+          cp -a upstream-signer/dist signer-public
+          git status --short | head -20
+      - name: Commit compiled files on isolated branch
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f signer-public
+          git commit -m "Publish local WebAssembly IPA signer with upstream MIT attribution"
+          git push origin HEAD:omnasign-browser-wasm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OmnaSign-WASM-Browser-Signer
+          path: signer-public/

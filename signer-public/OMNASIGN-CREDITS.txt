@@ -1,0 +1,3 @@
+OmnaSign Browser Signer uses code from Sylva Signer (MIT License) by AntonP29. Original source: https://github.com/AntonP29/SylvaSigner
+This build signs IPA files locally using a WASM port of zsign.
+The optional remote installation features from the upstream project may not work under OmnaSign domain because the upstream Worker restricts origins.

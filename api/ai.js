@@ -549,7 +549,7 @@ module.exports=async function handler(req,res){
    });
   let proposals=assembled.files.slice(0,12);
   let staticCheck=analyzeFiles(proposals,files,mode);
-  const blockingIssues=issues=>issues.filter(x=>/JavaScript syntax error|invalid JSON|Referenced .*missing|No index\.html was generated/i.test(x));
+  const blockingIssues=issues=>issues.filter(x=>/JavaScript syntax error|invalid JSON|Referenced .*missing|No index\.html was generated|existing navigation element appears to have been removed/i.test(x));
   let buildDiagnostics=blockingIssues(staticCheck.warnings);
   // Automatic compiler-style repair: give the model exact syntax/reference
   // failures. Its patched result must pass the same checks before release.

@@ -50,7 +50,7 @@ main{max-width:1190px;margin:0 auto;padding:25px 24px 80px}.eyebrow{color:#a5bff
 </div><p class="muted"><a class="btn small" href="https://github.com/poopyscoopdy/Gojo/releases/download/omnasign-desktop-v5.2-preview/OmnaSignDesktop.exe">Get OmnaSign 5.1 for Windows location testing</a></p><p class="muted">Requires separately installed pymobiledevice3, Developer Mode, a trusted device connection, and compatible iOS services. Windows 5.2 keeps an active developer session until you press Clear; iOS 27 support is unverified.</p></section><section id="ai" class="tool-page hidden"><div class="eyebrow">Web App / OmnaAi</div><h2>Build or edit with OmnaAi</h2>
 <p class="muted">AI can create HTML/CSS/JavaScript projects or propose edits to editable IPA resources. Review and approve changes before they touch your project. Compiled binaries and signing certificates are never sent.</p>
 <div class="two"><div class="card">
-<label for="aiMode">Task</label><select class="input" id="aiMode"><option value="create">Create a new app with OmnaAi</option><option value="edit">Continue improving my current app</option></select>
+<label for="aiMode">Task</label><select class="input" id="aiMode" onchange="updateAiContinuityNote()"><option value="create">Create a new app with OmnaAi</option><option value="edit">Continue improving my current app</option></select>
 <p class="muted" id="aiContinuityNote">Your first request creates an app. Once applied, future prompts update that same project and preserve its features.</p><div style="height:13px"></div>
 <label for="aiModel">Groq model</label><select id="aiModel" class="input"><option value="openai/gpt-oss-120b">GPT-OSS 120B · Advanced</option><option value="openai/gpt-oss-20b">GPT-OSS 20B · Faster</option></select><div style="height:13px"></div>
 <p class="notice" id="groqConnection">OmnaAi uses Groq through a server-side connection. No API key needed here.</p>
@@ -75,6 +75,8 @@ function openPage(page){
 }
 function openTool(tool){
  if(!tools.includes(tool))tool='studio';activeTool=tool;
+ if(tool==='ai' && typeof archive!=='undefined' && archive && document.getElementById('aiMode')) document.getElementById('aiMode').value='edit';
+ if(tool==='ai' && typeof updateAiContinuityNote==='function')updateAiContinuityNote();
  tools.forEach(t=>document.getElementById(t).classList.toggle('hidden',t!==tool));
  document.querySelectorAll('[data-tool]').forEach(b=>{b.classList.toggle('active',b.dataset.tool===tool);b.classList.toggle('primary',b.dataset.tool===tool)});
  openPage('webapp');
@@ -82,15 +84,73 @@ function openTool(tool){
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>openPage(b.dataset.page));
 const initial=location.hash.replace(/^#/,'');if(initial.startsWith('webapp/'))openTool(initial.split('/')[1]);else if(initial==='downloads')openPage('downloads');else if(tools.includes(initial))openTool(initial);else openTool('studio');
 let archive=null,selected=null,sourceType='web',unsaved=false;
+let projectGoal='',changeHistory=[],pendingAiRequest='',pendingAiMode='',pendingAiSummary='';
+const OMNA_DRAFT_KEY='omnasign_studio_local_draft_v3';
 const E=id=>document.getElementById(id);
+
+// Preserve small HTML/CSS/JS workspaces across refreshes. IPA binaries and signing credentials
+// are never saved in localStorage.
+async function saveLocalDraft(){
+ if(!archive || sourceType==='ipa')return;
+ try{
+  const files={};let total=0;
+  for(const [path,file] of Object.entries(archive.files)){
+   if(file.dir||!textFile(path)||path.length>180||Object.keys(files).length>=25)continue;
+   const value=await file.async('string');
+   if(value.length>90000||total+value.length>180000)return;
+   files[path]=value;total+=value.length;
+  }
+  if(Object.keys(files).length){
+   localStorage.setItem(OMNA_DRAFT_KEY,JSON.stringify({
+    files,projectGoal,changeHistory:changeHistory.slice(-6),
+    savedAt:Date.now(),sourceType:'web'
+   }));
+  }
+ }catch(err){/* Quota errors should not prevent saving/editing the current project. */}
+}
+async function restoreLocalDraft(){
+ if(archive||typeof JSZip==='undefined')return;
+ try{
+  const saved=JSON.parse(localStorage.getItem(OMNA_DRAFT_KEY)||'null');
+  if(!saved||!saved.files||typeof saved.files!=='object'||Array.isArray(saved.files))return;
+  let total=0;
+  const restored=new JSZip();
+  for(const [name,contents] of Object.entries(saved.files)){
+   if(typeof name!=='string'||name.includes('..')||name.includes('\\')||name.startsWith('/')||!textFile(name)||typeof contents!=='string')continue;
+   total+=contents.length;if(total>180000)return;
+   restored.file(name,contents);
+  }
+  if(!Object.keys(restored.files).length)return;
+  archive=restored;sourceType='web';selected=null;unsaved=false;
+  projectGoal=typeof saved.projectGoal==='string'?saved.projectGoal.slice(0,650):'';
+  changeHistory=Array.isArray(saved.changeHistory)?saved.changeHistory.filter(x=>typeof x==='string').slice(-6):[];
+  await refreshFiles();
+  const names=Object.keys(archive.files).filter(n=>!archive.files[n].dir&&textFile(n));
+  if(names.length)await selectFile(names.find(n=>/(^|\/)index\.html$/i.test(n))||names[0]);
+  E('aiMode').value='edit';
+  status('Restored your saved web project. The next OmnaAi prompt will improve this app.');
+ }catch(err){/* Storage can be disabled in some browsers. */}
+}
+function updateAiContinuityNote(){
+ const el=E('aiContinuityNote');if(!el)return;
+ const hasProject=!!archive && Object.values(archive.files).some(f=>!f.dir);
+ const create=E('aiMode')?.value==='create';
+ el.textContent=create&&hasProject?
+  'Create mode starts a different app. To preserve this app, choose Continue improving my current app.':
+  hasProject?
+  'Editing the current app. OmnaAi receives its existing source, original goal and recent approved changes.':
+  'Your first request creates an app. After applying, future prompts continue improving that same app.';
+}
+window.addEventListener('load',()=>{restoreLocalDraft().then(updateAiContinuityNote);});
+
 function status(v){E('studioStatus').textContent=v}
 function markUnsaved(){unsaved=true;E('fileHeading').textContent=(selected||'Source editor')+' • Unsaved'}
 function textFile(path){return /\.(html?|css|js|mjs|json|xml|txt|md|svg|plist|strings|yml|yaml)$/i.test(path)}
 async function refreshFiles(){if(!archive)return;const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x)).slice(0,500);E('fileCount').textContent=String(names.length);E('fileList').innerHTML='';names.forEach(name=>{let b=document.createElement('button');b.className='file'+(name===selected?' active':'');b.textContent=name;b.onclick=()=>selectFile(name);E('fileList').appendChild(b)});if(!names.length)status('No editable text resources were found in this archive.')}
 async function selectFile(name){if(unsaved)await saveFile();selected=name;try{E('editor').value=await archive.file(name).async('string');E('fileHeading').textContent=name;unsaved=false;await refreshFiles();if(/\.html?$/i.test(name))renderPreview()}catch(e){status('Cannot open this file: '+e.message)}}
-async function newProject(){if(typeof JSZip==='undefined'){status('ZIP library did not load. Check internet access.');return}archive=new JSZip();archive.file('index.html','<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Omna App</title><style>body{font-family:system-ui;text-align:center;padding:60px;background:#121c3f;color:white}h1{font-size:36px}</style></head><body><h1>My Omna App</h1><p>Edit this HTML and refresh preview!</p></body></html>');sourceType='web';selected=null;await refreshFiles();await selectFile('index.html');status('New web project. Export will be a web-project ZIP, not an installable IPA.')}
-async function importArchive(file){if(!file)return;if(typeof JSZip==='undefined'){status('ZIP library unavailable.');return}try{archive=await JSZip.loadAsync(file);sourceType=/\.ipa$/i.test(file.name)?'ipa':'zip';selected=null;unsaved=false;await refreshFiles();const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x));if(names.length)await selectFile(names.find(x=>/index\.html$/i.test(x))||names[0]);status('Imported '+file.name+'. Edit supported files, then export and re-sign any modified IPA.')}catch(e){status('Could not open archive: '+e.message)}}
-async function saveFile(){if(!archive||!selected)return;archive.file(selected,E('editor').value);unsaved=false;E('fileHeading').textContent=selected;status('Saved '+selected+' into local archive.')}
+async function newProject(){if(typeof JSZip==='undefined'){status('ZIP library did not load. Check internet access.');return}projectGoal='';changeHistory=[];archive=new JSZip();archive.file('index.html','<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>My Omna App</title><style>body{font-family:system-ui;text-align:center;padding:60px;background:#121c3f;color:white}h1{font-size:36px}</style></head><body><h1>My Omna App</h1><p>Edit this HTML and refresh preview!</p></body></html>');sourceType='web';selected=null;await refreshFiles();await selectFile('index.html');E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();status('New web project. Export will be a web-project ZIP, not an installable IPA.')}
+async function importArchive(file){if(!file)return;if(typeof JSZip==='undefined'){status('ZIP library unavailable.');return}try{archive=await JSZip.loadAsync(file);sourceType=/\.ipa$/i.test(file.name)?'ipa':'zip';selected=null;unsaved=false;projectGoal='Imported project: '+file.name;changeHistory=[];await refreshFiles();const names=Object.keys(archive.files).filter(x=>!archive.files[x].dir&&textFile(x));if(names.length)await selectFile(names.find(x=>/index\.html$/i.test(x))||names[0]);E('aiMode').value='edit';updateAiContinuityNote();await saveLocalDraft();status('Imported '+file.name+'. Edit supported files, then export and re-sign any modified IPA.')}catch(e){status('Could not open archive: '+e.message)}}
+async function saveFile(){if(!archive||!selected)return;archive.file(selected,E('editor').value);unsaved=false;E('fileHeading').textContent=selected;await saveLocalDraft();status('Saved '+selected+' into local archive.')}
 async function exportArchive(){if(!archive){status('Open an IPA or create a project first.');return}try{await saveFile();const blob=await archive.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=sourceType==='ipa'?'OmnaSign-edited-REQUIRES-RESIGN.ipa':'OmnaSign-web-project.zip';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),15000);status('Archive exported. Re-sign any modified IPA with compatible credentials before installing.')}catch(e){status('Export failed: '+e.message)}}
 async function renderPreview(){if(!archive){E('preview').srcdoc='<p style="font-family:system-ui">Open a web project to preview.</p>';return}try{if(unsaved)await saveFile();const names=Object.keys(archive.files);const html=names.find(n=>/index\.html$/i.test(n))||(selected&&/\.html?$/i.test(selected)?selected:null);if(!html){E('preview').srcdoc='<p style="font-family:system-ui">This project does not contain an HTML preview.</p>';return}let content=await archive.file(html).async('string');const parent=html.slice(0,html.lastIndexOf('/')+1);for(const [attr,tag] of [['href','link'],['src','script']]){const re=attr==='href'?/<link\b[^>]*href=["']([^"']+\.css)["'][^>]*>/gi:/<script\b[^>]*src=["']([^"']+\.js)["'][^>]*><\/script>/gi;const found=[...content.matchAll(re)];for(const m of found){const path=parent+m[1].replace(/^\.\//,'');if(archive.file(path)){const source=await archive.file(path).async('string');content=content.replace(m[0],attr==='href'?'<style>'+source+'</style>':'<script>'+source.replace(/<\/script/gi,'<\\/script')+'<\/script>')}}}E('preview').srcdoc=content;status('Preview refreshed. This is browser rendering, not a native iOS preview.')}catch(e){status('Preview failed: '+e.message)}}
 async function uploadSigned(){const f=E('otaFile').files[0],code=E('otaToken').value.trim(),bundle=E('otaBundle').value.trim();if(!f||!f.name.toLowerCase().endsWith('.ipa')){E('otaStatus').textContent='Select a signed .ipa first.';return}if(!code){E('otaStatus').textContent='The server owner access code is required.';return}if(!/^[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$/.test(bundle)){E('otaStatus').textContent='Enter your app’s actual bundle identifier.';return}E('otaButton').disabled=true;E('otaStatus').textContent='Uploading signed IPA…';try{const r=await fetch('/api/ota',{method:'POST',headers:{'content-type':'application/octet-stream','x-omna-token':code,'x-file-name':f.name,'x-bundle-identifier':bundle},body:f});const j=await r.json();if(!r.ok)throw Error(j.error||'Upload failed');E('otaStatus').textContent='Temporary link created. Expires '+new Date(j.expiresAt).toLocaleString();const target=E('installResult');target.innerHTML='';const a=document.createElement('a');a.className='btn primary';a.textContent='Install on iPhone';a.href=j.installUrl;target.appendChild(a);const p=document.createElement('p');p.className='muted';p.textContent='Open this link on the target iPhone. Installation still depends on valid Apple signing and provisioning.';target.appendChild(p);const input=document.createElement('input');input.className='input';input.readOnly=true;input.value=j.installUrl;target.appendChild(input)}catch(e){E('otaStatus').textContent=String(e.message)}finally{E('otaButton').disabled=false}}

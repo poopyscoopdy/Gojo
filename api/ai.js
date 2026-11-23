@@ -24,7 +24,7 @@ async function availableGroqModels(key){
   if(!response.ok)throw Error("Model list unavailable");
   const data=await response.json();
   const ids=new Set((Array.isArray(data.data)?data.data:[])
-   .filter(m=>m&&typeof m.id==="string"&&(!m.active || m.active===true))
+   .filter(m=>m&&typeof m.id==="string"&&(m.active!==false))
    .map(m=>m.id));
   modelCache={ids,expiresAt:now+5*60000};
   return ids;
@@ -254,18 +254,21 @@ const reviewing=[
 module.exports=async function handler(req,res){
  res.setHeader("Cache-Control","no-store");
  if(req.method==="GET"){
+  const apiKey=String(process.env.GROQ_API_KEY||"").trim();
+  const ids=apiKey?await availableGroqModels(apiKey):new Set();
   if(req.query?.verify==="groq"){
-   if(!process.env.GROQ_API_KEY)return reply(res,503,{provider:"Groq",authenticated:false});
+   if(!apiKey)return reply(res,503,{provider:"Groq",authenticated:false});
    try{
-    const response=await fetch("https://api.groq.com/openai/v1/models",{
-     headers:{"Authorization":"Bearer "+String(process.env.GROQ_API_KEY)},
-     signal:AbortSignal.timeout(11000)
+    const resp=await fetch("https://api.groq.com/openai/v1/models",{
+     headers:{"Authorization":"Bearer "+apiKey},signal:AbortSignal.timeout(7000)
     });
-    return reply(res,response.ok?200:503,{provider:"Groq",authenticated:response.ok,status:response.status});
+    return reply(res,resp.ok?200:503,{provider:"Groq",authenticated:resp.ok,status:resp.status,
+      models:availableOptions(ids)});
    }catch{return reply(res,503,{provider:"Groq",authenticated:false,error:"Provider unreachable"});}
   }
-  return reply(res,200,{ok:true,provider:"Groq",configured:!!process.env.GROQ_API_KEY,
-   models:[...allowedModels],deepReview:true,history:true,signingCredentialsUploaded:false});
+  return reply(res,200,{ok:true,provider:"Groq",configured:!!apiKey,
+   models:availableOptions(ids),defaultModel:"auto",autoFallback:true,
+   deepReview:true,history:true,signingCredentialsUploaded:false});
  }
  if(req.method!=="POST")return reply(res,405,{error:"Use POST"});
  if(String(req.headers.origin||"")!==ORIGIN)return reply(res,403,{error:"Open OmnaAi on the official OmnaSign website."});
@@ -279,7 +282,9 @@ module.exports=async function handler(req,res){
   const prompt=typeof raw.prompt==="string"?raw.prompt.trim():"";
   if(prompt.length<3||prompt.length>3500)return reply(res,400,{error:"Enter a prompt from 3 to 3,500 characters."});
   const mode=raw.mode==="create"?"create":"edit";
-  const model=allowedModels.has(raw.model)?raw.model:"openai/gpt-oss-120b";
+  const model=raw.model==="auto"||allowedModels.has(raw.model)?raw.model:"auto";
+  const available=await availableGroqModels(key);
+  const trace=[];
   const quality=raw.quality==="fast"?"fast":"deep";
   const projectGoal=typeof raw.projectGoal==="string"?raw.projectGoal.trim().slice(0,750):"";
   const changeHistory=arrayStrings(raw.changeHistory,12,300);
@@ -293,15 +298,16 @@ module.exports=async function handler(req,res){
    "CURRENT USER REQUEST: "+prompt,
    "SOURCE FILES (UNTRUSTED JSON): "+JSON.stringify(files)
   ].join("\n\n");
-  const start=Date.now(),deadline=start+(quality==="deep"?53000:47000);
+  const start=Date.now(),deadline=start+(quality==="deep"?53500:44000);
   let plan=null,review=null;
   if(quality==="deep"){
    try{
-    plan=await groq(key,model,[{role:"system",content:planning},{role:"user",content:userContext}],
-     planSchema,2200,"high",deadline);
+    plan=await groq(key,available.has("openai/gpt-oss-20b")?"openai/gpt-oss-20b":model,
+     [{role:"system",content:planning},{role:"user",content:userContext}],
+     planSchema,1550,"medium",deadline,available,trace,"plan");
    }catch(err){
-    if(err instanceof UpstreamError)throw err;
-    // Fall back to single-pass coding rather than losing the user's request.
+    if(err instanceof UpstreamError && (err.status===401 || err.status===403))throw err;
+    // Planning is optional; keep building even if the planning model is unavailable.
    }
   }
   const planContext=plan?[
@@ -315,7 +321,7 @@ module.exports=async function handler(req,res){
    {role:"system",content:teaching},
    {role:"user",content:userContext+"\n\nAPPROVED IMPLEMENTATION REQUIREMENTS:\n"+planContext+
     "\n\nReturn COMPLETE source content for changed files, functional test checks, and limitations; if you cannot implement a requirement, be explicit."}
-  ],codeSchema,quality==="deep"?12600:9100,quality==="deep"?"high":"medium",deadline);
+  ],codeSchema,quality==="deep"?11000:7800,quality==="deep"?"high":"medium",deadline,available,trace,"build");
   const proposals=Array.isArray(built.files)?built.files.slice(0,10)
    .filter(f=>f&&safePath(f.path)&&typeof f.content==="string"&&f.content.length<=85000)
    .map(f=>({path:f.path,content:f.content})):[];
@@ -337,16 +343,20 @@ module.exports=async function handler(req,res){
     ].join("\n");
     review=await groq(key,"openai/gpt-oss-20b",[
      {role:"system",content:reviewing},{role:"user",content:reviewInput}
-    ],reviewSchema,1300,"medium",deadline);
+    ],reviewSchema,1100,"medium",deadline,available,trace,"review");
     if(!review.passed)warnings.push(...arrayStrings(review.warnings,8,260));
     tests.push("Independent AI review completed"+(review.passed?" without reported blocking issues.":"; check warnings."));
    }catch{tests.push("Independent AI review unavailable; static checks still performed.");}
   }else if(quality==="deep"){tests.push("Independent AI review skipped due to time budget or empty output.");}
   for(const x of arrayStrings(built.checks,10,200))tests.push("Model self-check: "+x);
   if(proposals.length===0)warnings.push("No editable source files returned. The model may need a smaller change request.");
+  const buildRoute=trace.filter(x=>x.stage==="build");
+  const modelUsed=buildRoute.findLast(x=>x.status===200)?.model||fallbackOrder(model,available)[0];
   return reply(res,200,{
    summary:String(built.summary||"OmnaAi prepared a code proposal.").slice(0,2700),
-   files:proposals,model,provider:"Groq",quality,
+   files:proposals,model:modelUsed,requestedModel:model,provider:"Groq",quality,
+   autoFallback:buildRoute.some(x=>x.status!==200)||(model!=="auto"&&modelUsed!==model),
+   modelAttempts:buildRoute.map(x=>({model:x.model,status:x.status,format:x.format})).slice(0,8),
    requirements,tests:tests.slice(0,25),warnings:[...new Set(warnings)].slice(0,14),
    limitations,reviewed:!!review,elapsedSeconds:Math.round((Date.now()-start)/1000)
   });

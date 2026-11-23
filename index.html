@@ -144,10 +144,28 @@ async function restoreLocalDraft(){
   const names=Object.keys(archive.files).filter(n=>!archive.files[n].dir&&textFile(n));
   if(names.length)await selectFile(names.find(n=>/(^|\/)index\.html$/i.test(n))||names[0]);
   E('aiMode').value='edit';
+  migrateLegacyHistory(saved);
   status('Restored your saved web project. The next OmnaAi prompt will improve this app.');
  }catch(err){/* Storage can be disabled in some browsers. */}
 }
 
+function migrateLegacyHistory(saved){
+ if(!changeHistory.length||promptHistory.some(x=>x.projectId===projectId))return;
+ const flag='omnasign_migrated_history_'+projectId;
+ try{if(localStorage.getItem(flag))return;}catch{}
+ const createdAt=typeof saved.savedAt==='number'?new Date(saved.savedAt).toISOString():new Date().toISOString();
+ for(const [i,record] of changeHistory.slice(-12).entries()){
+  const m=/^User change:\s*([\s\S]*?)\s*\|\s*Applied:\s*([\s\S]*)$/.exec(record);
+  if(!m)continue;
+  promptHistory.push({
+   id:'legacy-'+projectId+'-'+i,projectId,createdAt,
+   prompt:m[1].trim().slice(0,3500),mode:i===0?'create':'edit',
+   quality:'fast',status:'applied',summary:m[2].trim().slice(0,500)
+  });
+ }
+ persistPromptHistory();
+ try{localStorage.setItem(flag,'1');}catch{}
+}
 function loadPromptHistory(){
  try{
   const data=JSON.parse(localStorage.getItem(OMNA_HISTORY_KEY)||'[]');

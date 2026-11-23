@@ -70,13 +70,14 @@ main{max-width:1190px;margin:0 auto;padding:25px 24px 80px}.eyebrow{color:#a5bff
 <div class="omna-ai-project"><strong id="aiActiveProjectName">Current project: Untitled App</strong><button class="btn small" onclick="openTool('studio');toggleProjectLibrary(true)">Saved projects</button></div>
 <label for="aiMode">Task</label><select class="input" id="aiMode" onchange="updateAiContinuityNote()"><option value="create">Create a new app with OmnaAi</option><option value="edit">Continue improving my current app</option></select>
 <p class="muted" id="aiContinuityNote">Your first request creates an app. Once applied, future prompts update that same project and preserve its features.</p><div style="height:13px"></div>
-<label for="aiModel">AI coding model</label>
+<label for="aiModel">AI coding model / provider</label>
 <select id="aiModel" class="input" onchange="rememberAiModel()">
 <option value="auto">Auto · Smart routing + backup models</option>
 <option value="openai/gpt-oss-120b">GPT-OSS 120B · Advanced reasoning</option>
 <option value="openai/gpt-oss-20b">GPT-OSS 20B · Fast reasoning</option>
 </select>
-<p id="aiModelStatus" class="muted">Checking the advanced models available to this Groq account…</p><div style="height:13px"></div>
+<p id="aiModelStatus" class="muted">Checking which model providers are actually connected…</p>
+<p class="muted" id="aiProviderStatus">The creator can use Groq now. Optional OpenRouter and Vercel AI Gateway models appear automatically when the site's owner connects those providers securely.</p><div style="height:13px"></div>
 <label for="aiProjectType">Project type</label>
 <select id="aiProjectType" class="input">
 <option value="web">Previewable web app · HTML/CSS/JS</option>
@@ -85,14 +86,14 @@ main{max-width:1190px;margin:0 auto;padding:25px 24px 80px}.eyebrow{color:#a5bff
 <p class="muted">Full-stack mode can create Node.js server, API, database schema and deployment files in your ZIP; backend services cannot run inside the browser preview. They require hosting.</p>
 <div style="height:12px"></div>
 <label for="aiQuality">Coding quality</label><select id="aiQuality" class="input"><option value="deep">Deep Coding · Plan, build &amp; review</option><option value="fast">Fast Coding · Single generation</option></select>
-<p class="muted">Deep Coding checks requirements, generates code and reviews the result. Auto chooses an available model and retries with backups when one fails. Groq account limits still apply.</p><div style="height:13px"></div>
-<p class="notice" id="groqConnection">OmnaAi uses Groq through a server-side connection. No API key needed here.</p>
+<p class="muted">Deep Coding plans, generates, validates, and reviews source code, and attempts to repair syntax/reference errors. Optional provider models fall back to Groq when they fail.</p><div style="height:13px"></div>
+<p class="notice" id="groqConnection">OmnaAi connects through a server-side provider key. No API key needed in the browser.</p>
 <label for="aiPrompt">Tell OmnaAi what to build or change next</label><textarea id="aiPrompt" rows="5" placeholder="Describe your app. After applying it, the next prompt will improve this same app…" style="resize:vertical"></textarea>
 <div class="toolbar"><button id="aiGo" class="btn primary small" onclick="askOmnaAi()">Generate proposals</button><button class="btn small" onclick="copyAiPrompt()">Copy prompt for ChatGPT</button></div><p class="state" id="aiStatus"></p>
 </div><div class="card"><h3>Review changes</h3><p class="muted">Open any file to review the proposed source. Nothing changes until you approve it.</p><div id="aiReview" style="max-height:420px;overflow:auto"></div>
 <div id="aiCodeChecks" class="hidden" style="margin:12px 0"></div>
 <button id="aiApply" class="btn primary hidden" onclick="applyAiProposal()">Apply changes &amp; preview</button>
-<div class="notice" style="margin-top:14px">OmnaAi runs through Groq without asking you for an API key. Requests may be limited by the Groq plan and website usage limits. Review code before applying it.</div></div></div><div class="card" style="margin-top:16px" id="aiHistoryCard">
+<div class="notice" style="margin-top:14px">OmnaAi uses the selected connected provider without collecting a key in the browser. Premium models may incur provider charges when enabled. Static checks are not a substitute for running and testing the app. Review changes before applying.</div></div></div><div class="card" style="margin-top:16px" id="aiHistoryCard">
 <div class="flex" style="align-items:center;gap:10px;flex-wrap:wrap"><div><h3 style="margin:0">Prompt history</h3><p class="muted" style="margin:6px 0 0">Your requests and applied changes, saved locally in this browser. Use an earlier prompt again without losing the current project.</p></div><button class="btn small" onclick="exportPromptHistory()">Export history</button><button class="btn small" onclick="clearPromptHistory()">Clear history</button></div>
 <div id="aiHistoryList" style="margin-top:14px"></div>
 </div></section>
@@ -482,7 +483,7 @@ async function renderPreview(){if(!archive){E('preview').srcdoc='<p style="font-
 async function uploadSigned(){const f=E('otaFile').files[0],code=E('otaToken').value.trim(),bundle=E('otaBundle').value.trim();if(!f||!f.name.toLowerCase().endsWith('.ipa')){E('otaStatus').textContent='Select a signed .ipa first.';return}if(!code){E('otaStatus').textContent='The server owner access code is required.';return}if(!/^[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$/.test(bundle)){E('otaStatus').textContent='Enter your app’s actual bundle identifier.';return}E('otaButton').disabled=true;E('otaStatus').textContent='Uploading signed IPA…';try{const r=await fetch('/api/ota',{method:'POST',headers:{'content-type':'application/octet-stream','x-omna-token':code,'x-file-name':f.name,'x-bundle-identifier':bundle},body:f});const j=await r.json();if(!r.ok)throw Error(j.error||'Upload failed');E('otaStatus').textContent='Temporary link created. Expires '+new Date(j.expiresAt).toLocaleString();const target=E('installResult');target.innerHTML='';const a=document.createElement('a');a.className='btn primary';a.textContent='Install on iPhone';a.href=j.installUrl;target.appendChild(a);const p=document.createElement('p');p.className='muted';p.textContent='Open this link on the target iPhone. Installation still depends on valid Apple signing and provisioning.';target.appendChild(p);const input=document.createElement('input');input.className='input';input.readOnly=true;input.value=j.installUrl;target.appendChild(input)}catch(e){E('otaStatus').textContent=String(e.message)}finally{E('otaButton').disabled=false}}
 E('serverStatus').textContent=' • Web App, Downloads and Groq AI';
 async function loadGroqModelOptions(){
- const el=E('groqConnection'),select=E('aiModel'),status=E('aiModelStatus');
+ const el=E('groqConnection'),select=E('aiModel'),status=E('aiModelStatus'),providerStatus=E('aiProviderStatus');
  if(!select)return;
  try{
   const response=await fetch('/api/ai',{cache:'no-store'});
@@ -490,7 +491,7 @@ async function loadGroqModelOptions(){
   const data=await response.json();
   const options=Array.isArray(data.models)?data.models:[];
   const selected=localStorage.getItem('omnaai_selected_coding_model')||'auto';
-  const auto=document.createElement('option');auto.value='auto';auto.textContent='Auto · Smart model + automatic fallback';
+  const auto=document.createElement('option');auto.value='auto';auto.textContent='Auto · Groq models with backup';
   select.replaceChildren(auto);
   for(const model of options){
    if(!model||typeof model.id!=='string'||typeof model.label!=='string')continue;
@@ -501,12 +502,16 @@ async function loadGroqModelOptions(){
    el.textContent='Groq is not configured. Manual project editing remains available.';
    status.textContent='Model availability unavailable.';
   }else{
-   el.textContent='Groq connected. OmnaAi will retry with an available backup model if the selected model fails.';
-   status.textContent=options.length+' compatible coding models currently available. Auto is recommended.';
+   const providers=Array.isArray(data.connectedProviders)?data.connectedProviders:['Groq'];
+   el.textContent='Connected: '+providers.join(', ')+'. OmnaAi retries backups and checks generated source.';
+   status.textContent=options.length+' coding models available from configured providers.';
+   if(providerStatus)providerStatus.textContent=providers.length===1?
+    'Optional expert models: OpenRouter and Vercel AI Gateway are supported but need a server-side OPENROUTER_API_KEY or AI_GATEWAY_API_KEY. They are not connected yet.':
+    'Choose a connected provider model to use it for coding. Auto uses Groq by default to control costs.';
   }
  }catch{
-  status.textContent='Live model list unavailable; Auto and GPT-OSS backups remain selectable.';
-  el.textContent='Could not verify Groq model availability. You can still try generating code.';
+  status.textContent='Live model list unavailable; existing Groq backups remain selectable.';
+  el.textContent='Could not verify model availability. You can still try generating code.';
  }
 }
 function rememberAiModel(){

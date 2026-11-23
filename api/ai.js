@@ -174,8 +174,8 @@ function analyzeFiles(changes,current,mode){
  return {warnings,checks};
 }
 function apiError(status){
- if(status===401||status===403)return{code:503,message:"The Groq server key was rejected. The site owner needs to rotate it."};
- if(status===429)return{code:429,message:"Groq is rate-limiting this account. Multiple models were tried; please retry later."};
+ if(status===401||status===403)return{code:503,message:"The selected AI provider rejected authentication. The owner should check its server-side credentials."};
+ if(status===429)return{code:429,message:"The AI provider is rate limiting this connection. Try again shortly."};
  if(status===400)return{code:502,message:"Groq rejected the coding request format. OmnaAi tried compatible options and backup models. Try Fast Coding or a smaller change."};
  if(status===404)return{code:502,message:"The selected Groq model is unavailable. Try Auto for a different model."};
  if(status===413)return{code:413,message:"Project context exceeds the provider limit. Reduce the project files sent."};
@@ -446,8 +446,13 @@ module.exports=async function handler(req,res){
       models:availableOptions(ids)});
    }catch{return reply(res,503,{provider:"Groq",authenticated:false,error:"Provider unreachable"});}
   }
+  const configured=await Promise.all([extraModels("openrouter"),extraModels("gateway")]);
+  const premium=configured.flat();
   return reply(res,200,{ok:true,provider:"Groq",configured:!!apiKey,
-   models:availableOptions(ids),defaultModel:"auto",autoFallback:true,
+   models:[...availableOptions(ids),...premium],defaultModel:"auto",autoFallback:true,
+   connectedProviders:["Groq",...(configuredProvider("openrouter")?["OpenRouter"]:[]),
+    ...(configuredProvider("gateway")?["Vercel AI Gateway"]:[])],
+   premiumRequiresOwnerSetup:premium.length===0,
    deepReview:true,history:true,signingCredentialsUploaded:false});
  }
  if(req.method!=="POST")return reply(res,405,{error:"Use POST"});
@@ -463,7 +468,9 @@ module.exports=async function handler(req,res){
   if(prompt.length<3||prompt.length>3500)return reply(res,400,{error:"Enter a prompt from 3 to 3,500 characters."});
   const mode=raw.mode==="create"?"create":"edit";
   const projectType=raw.projectType==="fullstack"?"fullstack":"web";
-  const model=raw.model==="auto"||allowedModels.has(raw.model)?raw.model:"auto";
+  const selected=typeof raw.model==="string"?raw.model:"auto";
+  const isPremium=selected.startsWith("openrouter:")||selected.startsWith("gateway:");
+  const model=selected==="auto"||allowedModels.has(selected)||isPremium?selected:"auto";
   const available=await availableGroqModels(key);
   const trace=[];
   const quality=raw.quality==="fast"?"fast":"deep";
@@ -502,7 +509,7 @@ module.exports=async function handler(req,res){
    "IMPLEMENTATION STRATEGY: "+JSON.stringify(arrayStrings(plan.approach,16,250)),
    "EXTERNAL LIMITATIONS: "+JSON.stringify(arrayStrings(plan.limitations,12,200))
   ].join("\n"):"Plan internally before editing; satisfy all explicit functional verbs, verify wiring and preserve existing code.";
-  let built=await groq(key,model,[
+  let built=await routeCodingModel(key,model,[
    {role:"system",content:teaching},
    {role:"user",content:userContext+"\n\nAPPROVED IMPLEMENTATION REQUIREMENTS:\n"+planContext+
     "\n\nReturn COMPLETE source content for changed files, functional test checks, and limitations; if you cannot implement a requirement, be explicit."}
@@ -527,7 +534,7 @@ module.exports=async function handler(req,res){
     "Keep current functionality; no extra analysis."
    ].join("\n\n");
    try{
-    const retry=await groq(key,"openai/gpt-oss-20b",[
+    const retry=await routeCodingModel(key,model.startsWith("openrouter:")||model.startsWith("gateway:")?model:"openai/gpt-oss-20b",[
      {role:"system",content:"You are a code-only repair agent. Produce a working code modification immediately in the requested JSON structure. No discussion without source changes."},
      {role:"user",content:compactInput}
     ],codeSchema,5600,"low",deadline,available,trace,"repair");
@@ -567,10 +574,13 @@ module.exports=async function handler(req,res){
   for(const x of arrayStrings(built.checks,10,200))tests.push("Model self-check: "+x);
   // Zero-file responses are handled above as HTTP 422, not a false success.
   const buildRoute=trace.filter(x=>x.stage==="build");
-  const modelUsed=buildRoute.findLast(x=>x.status===200)?.model||fallbackOrder(model,available)[0];
+  const modelUsed=buildRoute.findLast(x=>x.status===200)?.model||
+   (model.startsWith("openrouter:")||model.startsWith("gateway:")?"openai/gpt-oss-120b":fallbackOrder(model,available)[0]);
   return reply(res,200,{
    summary:String(built.summary||"OmnaAi prepared a code proposal.").slice(0,2700),
-   files:proposals,model:modelUsed,requestedModel:model,provider:"Groq",quality,projectType,
+   files:proposals,model:modelUsed,requestedModel:model,
+   provider:modelUsed.startsWith("openrouter:")?"OpenRouter":modelUsed.startsWith("gateway:")?"Vercel AI Gateway":"Groq",
+   quality,projectType,
    autoFallback:buildRoute.some(x=>x.status!==200)||(model!=="auto"&&modelUsed!==model),
    patchesApplied:assembled.patchCount,codeGenerated:true,repairUsed:trace.some(x=>x.stage==="repair"&&x.status===200),
    modelAttempts:buildRoute.map(x=>({model:x.model,status:x.status,format:x.format})).slice(0,8),
